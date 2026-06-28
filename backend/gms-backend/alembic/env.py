@@ -9,6 +9,7 @@ from alembic import context
 from app.database import Base
 from app.models import user, team, goal, progress, feedback, score, subtask
 from app.models import probation, review, notification
+from app.models import timeline, achievement, kudos, goal_history
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

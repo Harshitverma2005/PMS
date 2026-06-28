@@ -42,7 +42,7 @@ class GoalBase(BaseModel):
 class GoalCreate(GoalBase):
     assignee_id: int
     parent_id: int | None = None
-    subtasks: List[SubtaskCreate] = []
+    subtasks: List["SubtaskCreate"] = []
 
     @property
     def due_date(self) -> date:
@@ -71,14 +71,23 @@ class GoalUpdate(BaseModel):
     assignee_id: int | None = None
     weightage: float | None = None
     category: str | None = None
-    subtasks: Optional[List[SubtaskCreate]] = None
+    subtasks: Optional[List["SubtaskCreate"]] = None
 
 class GoalSubmit(BaseModel):
     pass
 
 class GoalApproval(BaseModel):
     approved: bool
+    comment: str = ""
     rejection_comment: str | None = None
+
+    @field_validator("comment")
+    @classmethod
+    def comment_not_only_whitespace(cls, v: str) -> str:
+        """If a comment is provided (non-empty), it must not be purely whitespace."""
+        if v and not v.strip():
+            raise ValueError("comment must not be empty or whitespace")
+        return v
 
 class ProgressUpdate(BaseModel):
     completion_percentage: float

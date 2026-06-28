@@ -9,6 +9,7 @@ class GoalStatus(str, Enum):
     SCORABLE = "scorable"
     SCORED = "scored"
     REJECTED = "rejected"
+    ARCHIVED = "archived"
 
 class UserRole(str, Enum):
     ADMIN = "admin"
@@ -76,3 +77,22 @@ class ReviewFormStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     SUBMITTED = "submitted"
     WAIVED = "waived"
+
+class TimelineEventType(str, Enum):
+    GOAL_CREATED        = "goal_created"
+    GOAL_APPROVED       = "goal_approved"
+    GOAL_COMPLETED      = "goal_completed"
+    GOAL_ARCHIVED       = "goal_archived"
+    PROGRESS_UPDATED    = "progress_updated"
+    FEEDBACK_SUBMITTED  = "feedback_submitted"
+    ACHIEVEMENT_LOGGED  = "achievement_logged"
+    KUDOS_RECEIVED      = "kudos_received"
+    CHECKIN_SUBMITTED   = "checkin_submitted"
+    GOAL_STATUS_CHANGED = "goal_status_changed"
+
+class AchievementCategory(str, Enum):
+    TECHNICAL_IMPACT = "technical_impact"
+    COST_SAVINGS     = "cost_savings"
+    DELIVERY         = "delivery"
+    LEADERSHIP       = "leadership"
+    COLLABORATION    = "collaboration"

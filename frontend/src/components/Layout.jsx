@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { notificationService } from '../api';
+import ChatbotWidget from './chat/ChatbotWidget';
 
 const COLORS = {
   bg: "#F5F4F0",
@@ -65,6 +66,11 @@ export default function Layout({ children }) {
     { id: "/performance", label: "My Reviews", icon: ClipboardList },
     { id: "/teams", label: "Team", icon: Users, roles: ["manager", "admin"] },
     { id: "/users", label: "Users", icon: UserCheck, roles: ["admin"] },
+    // Pro features
+    { id: "/timeline", label: "My Timeline", icon: Activity },
+    { id: "/achievements", label: "Achievements", icon: Award },
+    { id: "/kudos", label: "Kudos Feed", icon: Zap },
+    { id: "/readiness", label: "Review Readiness", icon: Target, roles: ["manager", "admin"] },
   ];
 
   const filteredNavItems = navItems.filter(item =>
@@ -218,6 +224,7 @@ export default function Layout({ children }) {
           {children}
         </div>
       </div>
+      {user && <ChatbotWidget />}
     </div>
   );
 }

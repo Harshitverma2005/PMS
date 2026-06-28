@@ -102,7 +102,18 @@ def approve_goal(
     require_manager_or_admin(current_user)
     
     try:
-        return goal_service.approve_goal(db, goal_id, current_user.id, approval.approved, approval.rejection_comment)
+        comment = approval.comment.strip() if approval.comment else approval.rejection_comment
+        result = goal_service.approve_goal(db, goal_id, current_user.id, approval.approved, comment)
+        # Record history transition
+        try:
+            from app.services.goal_history_service import record_transition
+            from app.enums import GoalStatus
+            from_status = GoalStatus.PENDING_APPROVAL
+            to_status = GoalStatus.ACTIVE if approval.approved else GoalStatus.REJECTED
+            record_transition(db, goal_id, from_status, to_status, current_user.id, comment)
+        except Exception:
+            pass
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

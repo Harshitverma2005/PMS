@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { chatService } from '../api/chat';
 
 export const useAuthStore = create((set) => ({
   user: (() => {
@@ -13,7 +14,14 @@ export const useAuthStore = create((set) => ({
     set({ token, user });
   },
   
-  logout: () => {
+  logout: async () => {
+    try {
+      if (localStorage.getItem('token')) {
+        await chatService.clearContext();
+      }
+    } catch (e) {
+      console.error("Failed to clear chat context on logout", e);
+    }
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     set({ token: null, user: null });

@@ -8,10 +8,13 @@ export const goalService = {
   update: (id, data) => apiClient.patch(API_ENDPOINTS.GOALS.BY_ID(id), data),
   delete: (id) => apiClient.delete(API_ENDPOINTS.GOALS.ARCHIVE(id)),
   submit: (id) => apiClient.post(API_ENDPOINTS.GOALS.SUBMIT(id)),
-  approve: (id) => 
-    apiClient.post(API_ENDPOINTS.GOALS.APPROVE(id), { approved: true }),
-  reject: (id, comment = '') => 
-    apiClient.post(API_ENDPOINTS.GOALS.APPROVE(id), { approved: false, rejection_comment: comment }),
+  approve: (id, comment = 'Approved') => 
+    apiClient.post(API_ENDPOINTS.GOALS.APPROVE(id), { approved: true, comment }),
+  reject: (id, comment) => 
+    apiClient.post(API_ENDPOINTS.GOALS.APPROVE(id), { approved: false, comment }),
+  archive: (id, reason) =>
+    apiClient.post(API_ENDPOINTS.GOALS.ARCHIVE(id), { archive_reason: reason }),
+  getHistory: (id) => apiClient.get(API_ENDPOINTS.GOALS.HISTORY(id)),
   updateProgress: (id, percentage) => 
     apiClient.post(API_ENDPOINTS.GOALS.PROGRESS(id), { completion_percentage: percentage }),
   

@@ -91,6 +91,12 @@ class ReviewService:
             created_count += 1
 
         cycle.status = ReviewCycleStatus.ACTIVE
+        db.flush()  # Write active status before snapshot
+
+        # Snapshot manager_of_record_id for all forms in this cycle
+        from app.services.cycle_snapshot_service import snapshot_manager_of_record
+        snapshot_manager_of_record(db, cycle_id)
+
         db.commit()
         db.refresh(cycle)
 
@@ -136,38 +142,56 @@ class ReviewService:
     def submit_form(self, db: Session, form_id: int, user_id: int, data: ReviewFormSubmit) -> ReviewForm:
         from app.services.notification_service import notification_service
         from app.services.red_flag_engine import red_flag_engine
+        from app.services.hierarchy_service import is_direct_manager
 
         form = self.get_form(db, form_id)
         if not form:
             raise ValueError("Form not found")
         if form.status == ReviewFormStatus.SUBMITTED:
+            if form.form_type == ReviewFormType.SELF_ASSESSMENT:
+                raise ValueError("Self-assessment is immutable after submission")
             raise ValueError("Form already submitted")
         if form.status == ReviewFormStatus.WAIVED:
             raise ValueError("Form has been waived")
 
-        # Validate ownership
+        # Separate-record enforcement
+        user = db.query(User).filter(User.id == user_id).first()
+        role = user.role.value if user and hasattr(user.role, 'value') else str(user.role) if user else 'member'
+
+        if form.form_type == ReviewFormType.MANAGER_FEEDBACK:
+            if role == 'member':
+                raise PermissionError("Members cannot submit manager feedback forms")
+            # Must be direct manager of the employee
+            if not is_direct_manager(db, user_id, form.employee_id):
+                if role != 'admin':
+                    raise PermissionError("Only the direct manager or admin can submit manager feedback")
+
         if form.form_type == ReviewFormType.SELF_ASSESSMENT and form.employee_id != user_id:
             raise ValueError("Only the employee can submit self-assessment")
-        if form.form_type == ReviewFormType.MANAGER_FEEDBACK and form.manager_id != user_id:
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user or user.role != UserRole.ADMIN:
-                raise ValueError("Only the assigned manager or admin can submit manager feedback")
 
-        if form.form_type == ReviewFormType.MANAGER_FEEDBACK and data.final_rating is None:
-            raise ValueError("final_rating is required for manager feedback")
+        # Manager form validation
+        if form.form_type == ReviewFormType.MANAGER_FEEDBACK:
+            comment = data.form_data.get('comment', '') if data.form_data else ''
+            if not comment or not str(comment).strip():
+                raise ValueError("comment is required for manager feedback")
+            if data.final_rating is None or not (1 <= data.final_rating <= 5):
+                raise ValueError("final_rating must be between 1 and 5 for manager feedback")
 
         form.form_data = data.form_data
         form.final_rating = data.final_rating
         form.status = ReviewFormStatus.SUBMITTED
         form.submitted_at = datetime.utcnow()
-        
+
+        # Preserve citations on manager submission
+        # (citations set by ai_draft_service are kept as-is)
+
         # RED FLAG ENGINE: Scan for issues
         flag_result = red_flag_engine.scan_feedback(db, form)
         form.is_flagged = flag_result["is_flagged"]
         form.flag_reason = flag_result["flag_reason"]
-        
+
         db.commit()
-        
+
         # Notify admin if red flag detected
         if form.is_flagged >= 2:
             notification_service.notify_flag(db, form)

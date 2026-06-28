@@ -30,6 +30,7 @@ class ReviewForm(Base):
     review_cycle_id = Column(Integer, ForeignKey("review_cycles.id"), nullable=False)
     employee_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    manager_of_record_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Snapshotted at cycle activation
     form_type = Column(SQLEnum(ReviewFormType), nullable=False)
     status = Column(SQLEnum(ReviewFormStatus), nullable=False, default=ReviewFormStatus.PENDING)
     form_data = Column(JSON, nullable=True)
@@ -40,11 +41,14 @@ class ReviewForm(Base):
     flag_reason = Column(Text, nullable=True)  # Why flagged
     flag_reviewed_at = Column(DateTime, nullable=True)
     flag_reviewed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    ai_draft = Column(JSON, nullable=True)   # AI-generated draft payload
+    citations = Column(JSON, nullable=True)  # Persisted citations map
     created_at = Column(DateTime, default=datetime.utcnow)
 
     cycle = relationship("ReviewCycle", back_populates="forms")
     employee = relationship("User", foreign_keys=[employee_id])
     manager = relationship("User", foreign_keys=[manager_id])
+    manager_of_record = relationship("User", foreign_keys=[manager_of_record_id])
     flag_reviewer = relationship("User", foreign_keys=[flag_reviewed_by])
 
 

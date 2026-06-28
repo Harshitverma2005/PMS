@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.db.database import create_tables, SessionLocal
 from app.db.seed import seed
-from app.routers import auth, users, goals, probation, cycles, feedback, admin, notifications
+from app.routers import auth, users, goals, probation, cycles, feedback, admin, notifications, chat
 
 
 @asynccontextmanager
@@ -45,6 +45,7 @@ app.include_router(cycles.router, prefix="/api")
 app.include_router(feedback.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(notifications.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
 
 
 @app.get("/")

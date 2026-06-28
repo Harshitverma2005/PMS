@@ -62,7 +62,7 @@ class GoalService:
         goal_dict['team_id'] = assignee.team_id
         
         goal = goal_repository.create(db, **goal_dict)
-        
+
         # Add initial subtasks
         if goal_data.subtasks:
             for st_data in goal_data.subtasks:
@@ -70,7 +70,22 @@ class GoalService:
                 db.add(subtask)
             db.commit()
             db.refresh(goal)
-            
+
+        # Emit timeline event
+        try:
+            from app.services import timeline_service
+            from app.enums import TimelineEventType
+            timeline_service.emit(
+                db=db,
+                employee_id=goal.assignee_id,
+                event_type=TimelineEventType.GOAL_CREATED,
+                title=goal.title,
+                summary=f"Goal created with status {goal.status.value}",
+                source_id=goal.id,
+            )
+        except Exception:
+            pass  # Timeline failures should not break goal creation
+
         return goal
     
     def update_goal(self, db: Session, goal_id: int, goal_data: GoalUpdate, user_id: int) -> Goal:
@@ -239,6 +254,19 @@ class GoalService:
         if approved:
             result = goal_repository.update(db, goal, status=GoalStatus.ACTIVE)
             notification_service.notify_goal_approved(db, result)
+            try:
+                from app.services import timeline_service
+                from app.enums import TimelineEventType
+                timeline_service.emit(
+                    db=db,
+                    employee_id=result.assignee_id,
+                    event_type=TimelineEventType.GOAL_APPROVED,
+                    title=result.title,
+                    summary="Goal approved and activated",
+                    source_id=result.id,
+                )
+            except Exception:
+                pass
             return result
         else:
             if not comment:
@@ -260,14 +288,42 @@ class GoalService:
             notes=progress_data.notes
         )
         db.add(progress)
-        
+
         goal_repository.update(db, goal, completion_percentage=progress_data.completion_percentage)
-        
+
         if progress_data.completion_percentage >= 100:
             goal_repository.update(db, goal, status=GoalStatus.COMPLETED)
             # Auto-transition to awaiting feedback
             goal_repository.update(db, goal, status=GoalStatus.AWAITING_FEEDBACK)
-        
+            try:
+                from app.services import timeline_service
+                from app.enums import TimelineEventType
+                timeline_service.emit(
+                    db=db,
+                    employee_id=goal.assignee_id,
+                    event_type=TimelineEventType.GOAL_COMPLETED,
+                    title=goal.title,
+                    summary="Goal completed at 100%",
+                    source_id=goal.id,
+                )
+            except Exception:
+                pass
+
+        # Emit progress_updated event
+        try:
+            from app.services import timeline_service
+            from app.enums import TimelineEventType
+            timeline_service.emit(
+                db=db,
+                employee_id=goal.assignee_id,
+                event_type=TimelineEventType.PROGRESS_UPDATED,
+                title=goal.title,
+                summary=progress_data.notes or f"{progress_data.completion_percentage}% complete",
+                source_id=progress.id,
+            )
+        except Exception:
+            pass
+
         db.commit()
         db.refresh(progress)
         return progress

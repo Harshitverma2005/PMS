@@ -101,7 +101,9 @@ def get_my_forms(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    return review_service.get_my_forms(db, current_user.id)
+    forms = review_service.get_my_forms(db, current_user.id)
+    return [_scrub_form(f, current_user.id) for f in forms]
+
 
 
 @router.get("/review-forms/{form_id}", response_model=ReviewFormResponse)
@@ -113,7 +115,8 @@ def get_form(
     form = review_service.get_form(db, form_id)
     if not form:
         raise HTTPException(status_code=404, detail="Form not found")
-    return form
+    return _scrub_form(form, current_user.id)
+
 
 
 @router.post("/review-forms/{form_id}/submit", response_model=ReviewFormResponse)
@@ -157,3 +160,23 @@ def _enrich_cycle(cycle) -> dict:
     from app.enums import ReviewFormStatus
     d["submitted_forms"] = sum(1 for f in cycle.forms if f.status == ReviewFormStatus.SUBMITTED)
     return d
+
+
+def _scrub_form(form, current_user_id: int):
+    """Hide manager feedback from employee until manager submits."""
+    from app.enums import ReviewFormType, ReviewFormStatus
+    d = ReviewFormResponse.model_validate(form).model_dump()
+    
+    # If this is a manager form, and it's NOT submitted yet, and the requester is the employee
+    if (form.form_type == ReviewFormType.MANAGER_FEEDBACK and 
+        form.status != ReviewFormStatus.SUBMITTED and 
+        form.employee_id == current_user_id):
+        
+        # Redact sensitive manager fields
+        d["form_data"] = None
+        d["final_rating"] = None
+        d["ai_draft"] = None
+        d["citations"] = None
+        
+    return d
+
