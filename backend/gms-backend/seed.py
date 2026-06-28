@@ -7,7 +7,7 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from app.database import SessionLocal, engine, Base
-from app.models import user, team, goal, subtask, progress, feedback, score
+from app.models import user, team, goal, subtask, progress, feedback, score, kudos, achievement, review, timeline
 from app.models.user import User
 from app.models.team import Team
 from app.enums import UserRole

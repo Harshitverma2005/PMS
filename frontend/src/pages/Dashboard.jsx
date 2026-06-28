@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import { goalService, userService, teamService, cycleService, notificationService, feedbackService, probationService, adminService, dashboardService } from '../api';
 import { useAuthStore } from "../store/auth";
 import toast from "react-hot-toast";
+import { GoalStatus } from '../constants/enums';
 import { readinessService } from '../api';
 import { 
   AlertTriangle, ArrowDown, ArrowUp, ArrowRight, CheckCircle, Flag, MessageSquare, Target, TrendingUp, 

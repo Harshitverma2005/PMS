@@ -78,7 +78,16 @@ class GoalSubmit(BaseModel):
 
 class GoalApproval(BaseModel):
     approved: bool
+    comment: str = ""
     rejection_comment: str | None = None
+
+    @field_validator("comment")
+    @classmethod
+    def comment_not_only_whitespace(cls, v: str) -> str:
+        """If a comment is provided (non-empty), it must not be purely whitespace."""
+        if v and not v.strip():
+            raise ValueError("comment must not be empty or whitespace")
+        return v
 
 class ProgressUpdate(BaseModel):
     completion_percentage: float

@@ -1,71 +1,76 @@
+"""
+Goal history property tests — Properties 9, 10, 11
+Validates: Requirements 2.2, 2.3, 2.4, 2.8
+# Feature: upms-pro-features
+"""
 import pytest
-from fastapi.testclient import TestClient
-from datetime import datetime
+from datetime import datetime, timedelta, date
 
-from app.main import app
 from app.models.goal import Goal
 from app.models.timeline import TimelineEvent
-from app.enums import GoalStatus, TimelineEventType
-from app.dependencies import get_current_user
-from app.models.user import User
+from app.enums import GoalStatus, GoalLevel, GoalTag, GoalPriority, TimelineEventType
+from tests.conftest import _make_goal
 
-client = TestClient(app)
 
-def override_get_current_user():
-    # Manager
-    return User(id=3, email="manager@example.com", role="manager", manager_id=2)
+# ── Property 9: Goal history ordered and complete ─────────────────────────
 
-app.dependency_overrides[get_current_user] = override_get_current_user
-
-# Properties: 9, 10, 11
-
-def test_goal_history_ordered_and_complete(test_db):
-    """
-    Property 9: Goal status history ordered and complete.
-    """
-    goal = Goal(id=10, title="G", assignee_id=4, status=GoalStatus.ACTIVE)
+def test_goal_history_ordered_and_complete(test_db, sample_users, client_as_manager):
+    """N status transitions produce exactly N history entries in ascending order."""
+    goal = _make_goal(id=10, title="History Goal", assignee_id=4, status=GoalStatus.PENDING_APPROVAL)
     test_db.add(goal)
     test_db.commit()
-    
-    # Do 3 transitions
-    client.post("/api/v1/goals/10/approve", json={"approved": False, "comment": "T1"})
-    client.post("/api/v1/goals/10/approve", json={"approved": True, "comment": "T2"})
-    client.post("/api/v1/goals/10/archive", json={"archive_reason": "T3"})
-    
-    resp = client.get("/api/v1/goals/10/history")
-    assert resp.status_code == 200
+
+    # Approve (PENDING_APPROVAL → ACTIVE)
+    r1 = client_as_manager.post("/api/v1/goals/10/approve", json={"approved": True, "comment": "Looks good"})
+    assert r1.status_code in (200, 201), r1.text
+
+    # Archive (ACTIVE → ARCHIVED)
+    r2 = client_as_manager.post("/api/v1/goals/10/archive", json={"archive_reason": "No longer needed"})
+    assert r2.status_code in (200, 201), r2.text
+
+    resp = client_as_manager.get("/api/v1/goals/10/history")
+    assert resp.status_code == 200, resp.text
     hist = resp.json()
-    assert len(hist) == 3
-    assert hist[0]["comment"] == "T1"
-    assert hist[1]["comment"] == "T2"
-    assert hist[2]["comment"] == "T3"
+    assert len(hist) == 2
+    # Ascending order — first entry is approval
+    assert hist[0]["comment"] == "Looks good"
+    assert hist[1]["comment"] == "No longer needed"
 
-def test_whitespace_comment_rejection(test_db):
-    """Property 10: Goal approval/rejection rejects whitespace-only comments."""
-    goal = Goal(id=11, title="G", assignee_id=4, status=GoalStatus.PENDING_APPROVAL)
+
+# ── Property 10: Whitespace-only comment rejection ────────────────────────
+
+def test_whitespace_comment_rejection(test_db, sample_users, client_as_manager):
+    """Whitespace-only comments return 422 and leave goal status unchanged."""
+    goal = _make_goal(id=11, title="Whitespace Test", assignee_id=4, status=GoalStatus.PENDING_APPROVAL)
     test_db.add(goal)
     test_db.commit()
-    
-    resp = client.post("/api/v1/goals/11/approve", json={"approved": True, "comment": "   "})
-    assert resp.status_code == 422
-    
-    resp = client.post("/api/v1/goals/11/archive", json={"archive_reason": "\n\t"})
-    assert resp.status_code == 422
-    
-    # Status should be unchanged
+
+    resp = client_as_manager.post("/api/v1/goals/11/approve", json={"approved": True, "comment": "   "})
+    assert resp.status_code == 422, resp.text
+
+    resp = client_as_manager.post("/api/v1/goals/11/archive", json={"archive_reason": "\n\t"})
+    assert resp.status_code == 422, resp.text
+
+    # Status should remain PENDING_APPROVAL
     test_db.refresh(goal)
     assert goal.status == GoalStatus.PENDING_APPROVAL
 
-def test_goal_transition_timeline_event(test_db):
-    """Property 11: Goal transition emits Timeline_Event."""
-    goal = Goal(id=12, title="G", assignee_id=4, status=GoalStatus.ACTIVE)
+
+# ── Property 11: Goal transition emits timeline event ─────────────────────
+
+def test_goal_transition_timeline_event(test_db, sample_users, client_as_manager):
+    """Archiving a goal emits a GOAL_STATUS_CHANGED timeline event for the assignee."""
+    goal = _make_goal(id=12, title="Timeline Emit Goal", assignee_id=4, status=GoalStatus.ACTIVE)
     test_db.add(goal)
     test_db.commit()
-    
-    # Transition
-    client.post("/api/v1/goals/12/archive", json={"archive_reason": "Archived it"})
-    
-    events = test_db.query(TimelineEvent).filter_by(employee_id=4, event_type=TimelineEventType.GOAL_STATUS_CHANGED).all()
+
+    resp = client_as_manager.post("/api/v1/goals/12/archive", json={"archive_reason": "Archived it"})
+    assert resp.status_code in (200, 201), resp.text
+
+    events = (
+        test_db.query(TimelineEvent)
+        .filter_by(employee_id=4, event_type=TimelineEventType.GOAL_STATUS_CHANGED)
+        .all()
+    )
     assert len(events) >= 1
-    # Check the last one
     assert "Archived it" in events[-1].summary
