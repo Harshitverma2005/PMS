@@ -32,6 +32,7 @@ export default function Probation() {
   const { user: currentUser } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [probations, setProbations] = useState([]);
+  const [users, setUsers] = useState({});
   const [error, setError] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -43,8 +44,20 @@ export default function Probation() {
     setError(false);
     setLoading(true);
     try {
-      const res = await probationService.getAll();
-      setProbations(Array.isArray(res.data) ? res.data : []);
+      const [probRes, usersRes] = await Promise.all([
+        probationService.getAll(),
+        userService.getAll()
+      ]);
+      setProbations(Array.isArray(probRes.data) ? probRes.data : []);
+      
+      // Create users lookup map
+      const usersMap = {};
+      if (Array.isArray(usersRes.data)) {
+        usersRes.data.forEach(user => {
+          usersMap[user.id] = user;
+        });
+      }
+      setUsers(usersMap);
     } catch (error) {
       setError(true);
       toast.error('Failed to load probation data');
@@ -63,10 +76,11 @@ export default function Probation() {
     }
   };
 
-  const filteredProbations = probations.filter(p => 
-    p.employee?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.calculated_status?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredProbations = probations.filter(p => {
+    const employee = users[p.employee_id];
+    return employee?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           p.calculated_status?.toLowerCase().includes(searchTerm.toLowerCase());
+  });
 
   const getStatusColor = (status) => {
     const s = status?.toLowerCase();
@@ -191,11 +205,11 @@ export default function Probation() {
                     <td style={{ padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}` }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                         <div style={{ width: 36, height: 36, borderRadius: 10, background: COLORS.bg, border: `1.5px solid ${COLORS.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: COLORS.muted }}>
-                          {prob.employee?.name?.charAt(0)}
+                          {users[prob.employee_id]?.name?.charAt(0) || 'U'}
                         </div>
                         <div>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{prob.employee?.name || `Employee #${prob.employee_id}`}</div>
-                          <div style={{ fontSize: 11, color: COLORS.muted }}>{prob.employee?.email}</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{users[prob.employee_id]?.name || `Employee #${prob.employee_id}`}</div>
+                          <div style={{ fontSize: 11, color: COLORS.muted }}>{users[prob.employee_id]?.email}</div>
                         </div>
                       </div>
                     </td>
