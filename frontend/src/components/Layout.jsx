@@ -65,6 +65,11 @@ export default function Layout({ children }) {
     { id: "/performance", label: "My Reviews", icon: ClipboardList },
     { id: "/teams", label: "Team", icon: Users, roles: ["manager", "admin"] },
     { id: "/users", label: "Users", icon: UserCheck, roles: ["admin"] },
+    // Pro features
+    { id: "/timeline", label: "My Timeline", icon: Activity },
+    { id: "/achievements", label: "Achievements", icon: Award },
+    { id: "/kudos", label: "Kudos Feed", icon: Zap },
+    { id: "/readiness", label: "Review Readiness", icon: Target, roles: ["manager", "admin"] },
   ];
 
   const filteredNavItems = navItems.filter(item =>

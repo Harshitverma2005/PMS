@@ -33,11 +33,15 @@ class ReviewFormResponse(BaseModel):
     review_cycle_id: int
     employee_id: int
     manager_id: Optional[int] = None
+    manager_of_record_id: Optional[int] = None
+    manager_of_record_name: Optional[str] = None
     form_type: ReviewFormType
     status: ReviewFormStatus
     form_data: Optional[Any] = None
     final_rating: Optional[int] = None
     submitted_at: Optional[datetime] = None
+    ai_draft: Optional[Any] = None
+    citations: Optional[Any] = None
     created_at: datetime
 
     class Config:

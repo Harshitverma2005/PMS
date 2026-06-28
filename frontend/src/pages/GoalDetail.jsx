@@ -41,7 +41,10 @@ export default function GoalDetail() {
   const [showProgressModal, setShowProgressModal] = useState(false);
   const [showSubtaskModal, setShowSubtaskModal] = useState(false);
   const [showInterventionModal, setShowInterventionModal] = useState(false);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [history, setHistory] = useState([]);
   const navigate = useNavigate();
   const currentUser = useAuthStore((state) => state.user);
 
@@ -51,8 +54,12 @@ export default function GoalDetail() {
 
   const loadGoal = async () => {
     try {
-      const response = await goalService.getById(id);
-      setGoal(response.data);
+      const [goalRes, histRes] = await Promise.all([
+        goalService.getById(id),
+        goalService.getHistory(id).catch(() => ({ data: [] }))
+      ]);
+      setGoal(goalRes.data);
+      setHistory(histRes.data || []);
     } catch (error) {
       toast.error('Strategic objective not found');
       navigate('/goals');
@@ -61,11 +68,12 @@ export default function GoalDetail() {
     }
   };
 
-  const handleApprove = async () => {
+  const handleApproveSubmit = async (comment) => {
     try {
-      await goalService.approve(id);
+      await goalService.approve(id, comment);
       toast.success('Strategy approved');
       loadGoal();
+      setShowApproveModal(false);
     } catch (error) {
       toast.error('Approval failed');
     }
@@ -83,6 +91,17 @@ export default function GoalDetail() {
       setShowInterventionModal(false);
     } catch (error) {
       toast.error('Rejection failed');
+    }
+  };
+
+  const handleArchiveSubmit = async (reason) => {
+    try {
+      await goalService.archive(id, reason);
+      toast.success('Objective archived');
+      loadGoal();
+      setShowArchiveModal(false);
+    } catch (error) {
+      toast.error('Archive failed');
     }
   };
 
@@ -153,9 +172,12 @@ export default function GoalDetail() {
             )}
             {goal.status === GoalStatus.PENDING_APPROVAL && canApprove && (
               <>
-                <button onClick={handleApprove} style={{ background: COLORS.emerald, border: "none", padding: "10px 20px", borderRadius: 10, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Approve Strategy</button>
+                <button onClick={() => setShowApproveModal(true)} style={{ background: COLORS.emerald, border: "none", padding: "10px 20px", borderRadius: 10, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Approve Strategy</button>
                 <button onClick={handleReject} style={{ background: COLORS.rose, border: "none", padding: "10px 20px", borderRadius: 10, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Intervene / Reject</button>
               </>
+            )}
+            {(isAssignee || isManager || isAdmin) && goal.status !== 'archived' && (
+              <button onClick={() => setShowArchiveModal(true)} style={{ background: COLORS.bg, border: `1.5px solid ${COLORS.border}`, padding: "10px 20px", borderRadius: 10, color: COLORS.text, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Archive</button>
             )}
             {goal.status === GoalStatus.ACTIVE && (isAssignee || canApprove) && (
               <>
@@ -224,6 +246,38 @@ export default function GoalDetail() {
 
             {/* Subtasks */}
             <SubtasksSection goal={goal} loadGoal={loadGoal} isAssignee={isAssignee} />
+
+            {/* History Timeline */}
+            {history && history.length > 0 && (
+              <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 24, padding: 32, display: "flex", flexDirection: "column", gap: 20 }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: COLORS.text }}>Status History</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {history.map((item, i) => (
+                    <div key={item.id || i} style={{ display: "flex", gap: 16, position: "relative" }}>
+                      {i !== history.length - 1 && <div style={{ position: "absolute", left: 11, top: 24, bottom: -16, width: 2, background: COLORS.border }} />}
+                      <div style={{ width: 24, height: 24, borderRadius: "50%", background: `${COLORS.accent}15`, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1, marginTop: 2 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.accent }} />
+                      </div>
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, background: COLORS.bg, padding: 16, borderRadius: 16 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                           <div>
+                             <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>{item.actor_name}</span>
+                             <span style={{ fontSize: 13, color: COLORS.muted }}> changed status to </span>
+                             <StatusPill status={item.to_status} size="sm" />
+                           </div>
+                           <span style={{ fontSize: 11, color: COLORS.subtle }}>{formatDate(item.timestamp)}</span>
+                        </div>
+                        {item.comment && (
+                           <div style={{ fontSize: 13, color: COLORS.text, background: "#fff", padding: "8px 12px", borderRadius: 8, border: `1px solid ${COLORS.border}`, fontStyle: "italic", marginTop: 4 }}>
+                             "{item.comment}"
+                           </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Feedback & Scoring */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
@@ -300,8 +354,37 @@ export default function GoalDetail() {
           <ProgressModal goal={goal} onClose={() => setShowProgressModal(false)} onSuccess={loadGoal} />
         )}
 
+        {showApproveModal && (
+          <InterventionModal 
+             title="Approve Strategy" 
+             subtitle="Add an approval note (required)." 
+             onClose={() => setShowApproveModal(false)} 
+             onSubmit={handleApproveSubmit} 
+             buttonText="Approve" 
+             buttonColor={COLORS.emerald}
+          />
+        )}
+
         {showInterventionModal && (
-          <InterventionModal onClose={() => setShowInterventionModal(false)} onSubmit={handleInterventionSubmit} />
+          <InterventionModal 
+             title="Intervention Rationale" 
+             subtitle="Explain the reason for this administrative intervention." 
+             onClose={() => setShowInterventionModal(false)} 
+             onSubmit={handleInterventionSubmit}
+             buttonText="Confirm Intervention"
+             buttonColor={COLORS.rose}
+          />
+        )}
+
+        {showArchiveModal && (
+          <InterventionModal 
+             title="Archive Objective" 
+             subtitle="Provide a reason for archiving this objective." 
+             onClose={() => setShowArchiveModal(false)} 
+             onSubmit={handleArchiveSubmit}
+             buttonText="Archive"
+             buttonColor={COLORS.muted}
+          />
         )}
 
         {showEditModal && (
@@ -667,13 +750,39 @@ function ScoreSection({ goal, loadGoal, canScore }) {
   );
 }
 
-function InterventionModal({ onClose, onSubmit }) {
+function StatusPill({ status, size = "sm" }) {
+  const config = {
+    [GoalStatus.DRAFT]: { bg: `${COLORS.subtle}18`, text: COLORS.muted, label: "Draft" },
+    [GoalStatus.ACTIVE]: { bg: `${COLORS.accent}12`, text: COLORS.accent, label: "Active" },
+    [GoalStatus.COMPLETED]: { bg: `${COLORS.emerald}12`, text: COLORS.emerald, label: "Completed" },
+    [GoalStatus.PENDING_APPROVAL]: { bg: `${COLORS.amber}12`, text: COLORS.amber, label: "Pending Approval" },
+    [GoalStatus.AWAITING_FEEDBACK]: { bg: `${COLORS.violet}12`, text: COLORS.violet, label: "Awaiting Feedback" },
+    [GoalStatus.SCORED]: { bg: `${COLORS.emerald}24`, text: COLORS.emerald, label: "Scored" },
+    [GoalStatus.REJECTED]: { bg: `${COLORS.rose}12`, text: COLORS.rose, label: "Rejected" },
+    "archived": { bg: `${COLORS.subtle}18`, text: COLORS.muted, label: "Archived" },
+  };
+  const c = config[status] || { bg: COLORS.bg, text: COLORS.muted, label: status || "—" };
+  const pad = size === "sm" ? "3px 8px" : "4px 12px";
+  const fs = size === "sm" ? 10 : 11;
+  return (
+    <div style={{
+      display: "inline-flex", padding: pad, borderRadius: 6,
+      background: c.bg, color: c.text,
+      fontSize: fs, fontWeight: 700, letterSpacing: "-0.01em",
+      whiteSpace: "nowrap",
+    }}>
+      {c.label}
+    </div>
+  );
+}
+
+function InterventionModal({ title, subtitle, onClose, onSubmit, buttonText, buttonColor }) {
   const [reason, setReason] = useState("");
   const [processing, setProcessing] = useState(false);
 
   const handleSubmit = async () => {
     if (!reason.trim()) {
-      toast.error("Please provide a rationale");
+      toast.error("Please provide a rationale/comment");
       return;
     }
     setProcessing(true);
@@ -685,24 +794,24 @@ function InterventionModal({ onClose, onSubmit }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
        <div style={{ background: "#fff", padding: 32, borderRadius: 24, width: 440, display: "flex", flexDirection: "column", gap: 24, boxShadow: "0 20px 40px rgba(0,0,0,0.12)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-             <div style={{ width: 44, height: 44, borderRadius: 12, background: `${COLORS.rose}10`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Shield size={22} color={COLORS.rose} />
+             <div style={{ width: 44, height: 44, borderRadius: 12, background: `${buttonColor}10`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Shield size={22} color={buttonColor} />
              </div>
              <div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.text }}>Intervention Rationale</div>
-                <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 2 }}>Explain the reason for this administrative intervention.</p>
+                <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.text }}>{title}</div>
+                <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 2 }}>{subtitle}</p>
              </div>
           </div>
           
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
              <label style={{ fontSize: 11, fontWeight: 800, color: COLORS.subtle, textTransform: "uppercase", letterSpacing: "0.05em" }}>Description</label>
-             <textarea rows="5" value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Goal alignment issues or budget reallocation..."
+             <textarea rows="5" value={reason} onChange={e => setReason(e.target.value)} placeholder="Enter details here..."
                style={{ 
                  width: "100%", padding: "14px", border: `1.5px solid ${COLORS.border}`, borderRadius: 14, 
                  fontSize: 14, outline: "none", background: COLORS.bg, resize: "none",
                  fontFamily: "inherit", lineHeight: 1.5, transition: "border 0.2s",
                }} 
-               onFocus={e => e.target.style.borderColor = COLORS.rose}
+               onFocus={e => e.target.style.borderColor = buttonColor}
                onBlur={e => e.target.style.borderColor = COLORS.border}
              />
           </div>
@@ -712,12 +821,12 @@ function InterventionModal({ onClose, onSubmit }) {
              <button onClick={handleSubmit} disabled={processing} 
                style={{ 
                  flex: 1.5, padding: 14, borderRadius: 12, border: "none", 
-                 background: COLORS.rose, color: "#fff", fontWeight: 700, cursor: "pointer", 
+                 background: buttonColor, color: "#fff", fontWeight: 700, cursor: "pointer", 
                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                  opacity: processing ? 0.7 : 1, transition: "all 0.2s",
-                 boxShadow: `0 4px 12px ${COLORS.rose}33`,
+                 boxShadow: `0 4px 12px ${buttonColor}33`,
                }}>
-               {processing ? "Saving..." : "Confirm Intervention"}
+               {processing ? "Saving..." : buttonText}
              </button>
           </div>
        </div>

@@ -28,9 +28,24 @@ class FeedbackService:
         )
         db.add(feedback)
         db.flush()
-        
+
         self._check_and_update_status(db, goal)
-        
+
+        # Emit timeline event on goal assignee's timeline
+        try:
+            from app.services import timeline_service
+            from app.enums import TimelineEventType
+            timeline_service.emit(
+                db=db,
+                employee_id=goal.assignee_id,
+                event_type=TimelineEventType.FEEDBACK_SUBMITTED,
+                title=goal.title,
+                summary="Member feedback submitted",
+                source_id=feedback.id,
+            )
+        except Exception:
+            pass
+
         db.commit()
         db.refresh(feedback)
         return feedback
@@ -80,7 +95,22 @@ class FeedbackService:
             notification_service.notify_flag(db, feedback.id, "goal_feedback")
         
         self._check_and_update_status(db, goal)
-        
+
+        # Emit timeline event on goal assignee's timeline
+        try:
+            from app.services import timeline_service
+            from app.enums import TimelineEventType
+            timeline_service.emit(
+                db=db,
+                employee_id=goal.assignee_id,
+                event_type=TimelineEventType.FEEDBACK_SUBMITTED,
+                title=goal.title,
+                summary="Evaluator feedback submitted",
+                source_id=feedback.id,
+            )
+        except Exception:
+            pass
+
         db.commit()
         db.refresh(feedback)
         return feedback

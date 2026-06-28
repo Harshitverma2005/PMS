@@ -19,6 +19,13 @@ import FeedbackFlags from './pages/FeedbackFlags';
 import Notifications from './pages/Notifications';
 import ProbationDetail from './pages/ProbationDetail';
 
+// Pro feature pages
+import Timeline from './pages/Timeline';
+import Achievements from './pages/Achievements';
+import Kudos from './pages/Kudos';
+import Readiness from './pages/Readiness';
+import ReviewStudio from './pages/ReviewStudio';
+
 function App() {
   const token = useAuthStore((state) => state.token);
 
@@ -47,6 +54,13 @@ function App() {
         <Route path="/performance" element={<ProtectedRoute><PerformanceReview /></ProtectedRoute>} />
         <Route path="/performance/form/:id" element={<ProtectedRoute><FeedbackForm /></ProtectedRoute>} />
         <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+
+        {/* Pro feature routes */}
+        <Route path="/timeline" element={<ProtectedRoute><Timeline /></ProtectedRoute>} />
+        <Route path="/achievements" element={<ProtectedRoute><Achievements /></ProtectedRoute>} />
+        <Route path="/kudos" element={<ProtectedRoute><Kudos /></ProtectedRoute>} />
+        <Route path="/readiness" element={<ProtectedRoute><Readiness /></ProtectedRoute>} />
+        <Route path="/review-studio/:formId" element={<ProtectedRoute><ReviewStudio /></ProtectedRoute>} />
         
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -55,3 +69,4 @@ function App() {
 }
 
 export default App;
+

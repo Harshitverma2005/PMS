@@ -42,7 +42,7 @@ class GoalBase(BaseModel):
 class GoalCreate(GoalBase):
     assignee_id: int
     parent_id: int | None = None
-    subtasks: List[SubtaskCreate] = []
+    subtasks: List["SubtaskCreate"] = []
 
     @property
     def due_date(self) -> date:
@@ -71,7 +71,7 @@ class GoalUpdate(BaseModel):
     assignee_id: int | None = None
     weightage: float | None = None
     category: str | None = None
-    subtasks: Optional[List[SubtaskCreate]] = None
+    subtasks: Optional[List["SubtaskCreate"]] = None
 
 class GoalSubmit(BaseModel):
     pass

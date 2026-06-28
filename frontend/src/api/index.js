@@ -10,3 +10,11 @@ export { default as probationService } from './probation';
 export { default as notificationService } from './notification';
 export { default as adminService } from './admin';
 export { default as dashboardService } from './dashboard';
+
+// Pro feature API modules
+export { default as timelineService } from './timeline';
+export { default as achievementsService } from './achievements';
+export { default as kudosService } from './kudos';
+export { default as readinessService } from './readiness';
+export { default as aiDraftService } from './aiDraft';
+export { default as exportApiService } from './exportApi';

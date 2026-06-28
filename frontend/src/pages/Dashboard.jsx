@@ -2,9 +2,9 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { goalService, userService, teamService, cycleService, notificationService, feedbackService, probationService, adminService, dashboardService } from '../api';
-import { GoalStatus, GoalLevel } from '../constants/enums';
 import { useAuthStore } from "../store/auth";
 import toast from "react-hot-toast";
+import { readinessService } from '../api';
 import { 
   AlertTriangle, ArrowDown, ArrowUp, ArrowRight, CheckCircle, Flag, MessageSquare, Target, TrendingUp, 
   Activity, Zap, BarChart3, Clock, Eye, Edit3, Send, Plus, Percent,
@@ -217,6 +217,7 @@ export default function Dashboard() {
   const [myProbation, setMyProbation] = useState(null);
   const [adminData, setAdminData] = useState(null);
   const [teamData, setTeamData] = useState(null);
+  const [readiness, setReadiness] = useState(null);
   
   const currentUser = useAuthStore((state) => state.user);
 
@@ -242,16 +243,18 @@ export default function Dashboard() {
         setNotifications(notificationsRes.data || []);
         setGoals(goalsRes.data || []);
       } else {
-        const [goalsRes, notificationsRes, performanceRes, probationRes] = await Promise.all([
+        const [goalsRes, notificationsRes, performanceRes, probationRes, readinessRes] = await Promise.all([
           goalService.getAll().catch(() => ({ data: [] })),
           notificationService.getAll().catch(() => ({ data: [] })),
           feedbackService.getAll().catch(() => ({ data: [] })),
-          probationService.getMe(currentUser.id).then(r => r.data).catch(() => null)
+          probationService.getMe(currentUser.id).then(r => r.data).catch(() => null),
+          readinessService.getReadiness(currentUser.id).catch(() => ({ data: null }))
         ]);
         setGoals(Array.isArray(goalsRes.data) ? goalsRes.data : []);
         setNotifications(notificationsRes.data || []);
         setPerformanceForms(performanceRes.data || []);
         setMyProbation(probationRes || null);
+        setReadiness(readinessRes.data || null);
       }
     } catch (error) {
       console.error("Dashboard Load Error:", error);
@@ -774,6 +777,55 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
+
+            {/* ═══ READINESS SECTION ═══ */}
+            {readiness && (
+              <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: 24 }}>
+                <SectionHeader 
+                  icon={Activity} 
+                  title="Review Readiness" 
+                  subtitle="Your preparedness for the upcoming performance cycle"
+                  color={readiness.score >= 70 ? COLORS.emerald : readiness.score >= 40 ? COLORS.amber : COLORS.rose}
+                />
+                
+                <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
+                   <div style={{
+                      width: 100, height: 100, borderRadius: "50%",
+                      background: `conic-gradient(${readiness.score >= 70 ? COLORS.emerald : readiness.score >= 40 ? COLORS.amber : COLORS.rose} ${readiness.score}%, ${COLORS.bg} 0)`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      position: "relative"
+                   }}>
+                      <div style={{
+                         position: "absolute", inset: 8, background: COLORS.card, borderRadius: "50%",
+                         display: "flex", alignItems: "center", justifyContent: "center",
+                         flexDirection: "column"
+                      }}>
+                         <span style={{ fontSize: 24, fontWeight: 900, color: COLORS.text }}>{readiness.score}</span>
+                         <span style={{ fontSize: 10, fontWeight: 700, color: COLORS.muted }}>SCORE</span>
+                      </div>
+                   </div>
+                   
+                   <div style={{ flex: 1 }}>
+                      {readiness.score === 100 ? (
+                         <div style={{ display: "flex", alignItems: "center", gap: 10, color: COLORS.emerald, background: `${COLORS.emerald}10`, padding: 16, borderRadius: 12 }}>
+                            <CheckCircle size={24} />
+                            <span style={{ fontSize: 14, fontWeight: 700 }}>You are review-ready — great work!</span>
+                         </div>
+                      ) : (
+                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, marginBottom: 4 }}>RECOMMENDED ACTIONS:</div>
+                            {readiness.prompts.map((prompt, i) => (
+                               <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: COLORS.text, background: COLORS.bg, padding: 10, borderRadius: 8 }}>
+                                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.amber, marginTop: 6, flexShrink: 0 }} />
+                                  <span>{prompt}</span>
+                               </div>
+                            ))}
+                         </div>
+                      )}
+                   </div>
+                </div>
+              </div>
+            )}
 
             {/* ═══ FEEDBACK / REVIEWS SECTION ═══ */}
             {currentUser.role !== 'member' && (
