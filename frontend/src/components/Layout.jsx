@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { notificationService } from '../api';
+import ChatbotWidget from './chat/ChatbotWidget';
 
 const COLORS = {
   bg: "#F5F4F0",
@@ -223,6 +224,7 @@ export default function Layout({ children }) {
           {children}
         </div>
       </div>
+      {user && <ChatbotWidget />}
     </div>
   );
 }

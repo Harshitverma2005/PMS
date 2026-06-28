@@ -20,6 +20,7 @@ from app.routers import readiness as readiness_router
 from app.routers import goal_history as goal_history_router
 from app.routers import ai_draft as ai_draft_router
 from app.routers import export as export_router
+from app.routers import chat as chat_router
 
 app = FastAPI(title="PMS — Performance & Goal Management Platform", version="2.0.0")
 
@@ -60,6 +61,7 @@ app.include_router(readiness_router.router,     prefix="/api/v1/readiness",     
 app.include_router(goal_history_router.router,  prefix="/api/v1/goals",          tags=["goal-history"])
 app.include_router(ai_draft_router.router,      prefix="/api/v1/reviews",        tags=["ai-draft"])
 app.include_router(export_router.router,        prefix="/api/v1/reviews",        tags=["export"])
+app.include_router(chat_router.router,          prefix="/api/v1")
 
 
 @app.on_event("startup")
