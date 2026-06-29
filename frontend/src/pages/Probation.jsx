@@ -1,247 +1,226 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  UserCheck, Clock, Calendar, AlertTriangle, 
-  CheckCircle2, ChevronRight, Zap, RefreshCw,
-  Search, Filter, ArrowUpRight, BarChart3,
-  MoreHorizontal, FileText, UserMinus, ShieldCheck
+import {
+  UserCheck, Clock, AlertTriangle,
+  Search, ArrowUpRight, RefreshCw, ShieldCheck, Plus, Zap
 } from 'lucide-react';
 import Layout from '../components/Layout';
-import { probationService, userService } from '../api';
-import toast from 'react-hot-toast';
 import { useAuthStore } from '../store/auth';
+import { probationService, userService } from '../api';
+import { formatDate } from '../utils/format';
+import toast from 'react-hot-toast';
 
 const COLORS = {
-  bg: "#F5F4F0",
-  surface: "#FFFFFF",
-  card: "#FFFFFF",
-  border: "#E4E2DC",
-  accent: "#2563EB",
-  accentDim: "#1D4ED8",
-  emerald: "#059669",
-  amber: "#D97706",
-  rose: "#DC2626",
-  violet: "#7C3AED",
-  text: "#111111",
-  muted: "#6B7280",
-  subtle: "#9CA3AF",
+  bg: "#F5F4F0", surface: "#FFFFFF", card: "#FFFFFF", border: "#E4E2DC",
+  accent: "#2563EB", emerald: "#059669", amber: "#D97706", rose: "#DC2626",
+  violet: "#7C3AED", text: "#111111", muted: "#6B7280", subtle: "#9CA3AF",
+};
+
+const asArray = (res) => {
+  const d = res?.data;
+  if (Array.isArray(d)) return d;
+  if (Array.isArray(d?.data)) return d.data;
+  if (Array.isArray(d?.items)) return d.items;
+  return [];
+};
+
+const statusColor = (status) => {
+  const s = (status || '').toLowerCase();
+  if (s.includes('on track') || s.includes('completed')) return COLORS.emerald;
+  if (s.includes('overdue') || s.includes('terminated')) return COLORS.rose;
+  if (s.includes('pending') || s.includes('due') || s.includes('review')) return COLORS.amber;
+  if (s.includes('paused')) return COLORS.muted;
+  return COLORS.accent;
 };
 
 export default function Probation() {
   const navigate = useNavigate();
-  const { user: currentUser } = useAuthStore();
-  const [loading, setLoading] = useState(true);
-  const [probations, setProbations] = useState([]);
-  const [users, setUsers] = useState({});
-  const [error, setError] = useState(false);
+  const currentUser = useAuthStore((s) => s.user);
+  const isAdmin = currentUser?.role === 'admin';
+  const isAllowed = isAdmin || currentUser?.role === 'manager';
+
   const [searchTerm, setSearchTerm] = useState('');
+  const [allUsers, setAllUsers] = useState([]);
+  const [probations, setProbations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    setError(false);
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [probRes, usersRes] = await Promise.all([
+      const [probRes, userRes] = await Promise.all([
         probationService.getAll(),
-        userService.getAll()
+        userService.getAll().catch(() => ({ data: [] })),
       ]);
-      setProbations(Array.isArray(probRes.data) ? probRes.data : []);
-      
-      // Create users lookup map
-      const usersMap = {};
-      if (Array.isArray(usersRes.data)) {
-        usersRes.data.forEach(user => {
-          usersMap[user.id] = user;
-        });
+      const userList = asArray(userRes);
+      setAllUsers(userList);
+      const userMap = Object.fromEntries(userList.map(u => [u.id, u]));
+
+      let probList = asArray(probRes).map(p => ({
+        ...p,
+        emp: p.employee || userMap[p.employee_id] || null,
+      }));
+      if (currentUser?.role === 'manager') {
+        probList = probList.filter(p => (p.emp?.manager_id ?? userMap[p.employee_id]?.manager_id) === currentUser.id);
       }
-      setUsers(usersMap);
-    } catch (error) {
-      setError(true);
-      toast.error('Failed to load probation data');
+      setProbations(probList);
+    } catch (err) {
+      toast.error('Failed to load probation records');
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser]);
 
-  const handleScanTriggers = async () => {
+  useEffect(() => {
+    if (isAllowed) load();
+    else setLoading(false);
+  }, [isAllowed, load]);
+
+  const handleScan = async () => {
+    setScanning(true);
     try {
-      // In a real app, this would be a specific admin endpoint
-      toast.success('Milestone scan initiated');
-      loadData();
-    } catch (e) {
-      toast.error('Scan failed');
+      await probationService.scan();
+      toast.success('Milestones scanned — due check-ins fired');
+      await load();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Scan failed');
+    } finally {
+      setScanning(false);
     }
   };
 
-  const filteredProbations = probations.filter(p => {
-    const employee = users[p.employee_id];
-    return employee?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-           p.calculated_status?.toLowerCase().includes(searchTerm.toLowerCase());
+  if (!isAllowed) {
+    return (
+      <Layout>
+        <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+          <ShieldCheck size={48} className="text-gray-300 mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900">Access Denied</h2>
+          <p className="text-gray-500 mt-2">You do not have permission to view the Probation Tracker.</p>
+        </div>
+      </Layout>
+    );
+  }
+
+  const filtered = probations.filter((p) => {
+    const term = searchTerm.toLowerCase();
+    return (p.emp?.name || '').toLowerCase().includes(term) || (p.calculated_status || '').toLowerCase().includes(term);
   });
 
-  const getStatusColor = (status) => {
-    const s = status?.toLowerCase();
-    if (s?.includes('on track')) return COLORS.emerald;
-    if (s?.includes('overdue')) return COLORS.rose;
-    if (s?.includes('pending') || s?.includes('due')) return COLORS.amber;
-    if (s?.includes('completed')) return COLORS.accent;
-    return COLORS.muted;
+  // Milestone (trigger) status for a given day (30/60/80).
+  const milestone = (prob, day) => {
+    const t = (prob.triggers || []).find(tr => tr.trigger_day === day);
+    if (!t) return { color: 'var(--bg)', label: 'Upcoming', text: 'var(--text-muted)' };
+    const st = (t.status || '').toLowerCase();
+    if (st === 'submitted' || (t.feedbacks || []).length > 0) return { color: '#10B981', label: 'Submitted', text: '#10B981' };
+    if (st === 'escalated') return { color: '#EF4444', label: 'Escalated', text: '#EF4444' };
+    if (st === 'blocked') return { color: '#EF4444', label: 'Blocked', text: '#EF4444' };
+    return { color: '#F59E0B', label: 'Awaiting', text: '#F59E0B' }; // triggered
   };
 
-  if (loading) return (
-    <Layout>
-      <div style={{ height: "60vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
-        <div style={{ width: 32, height: 32, borderRadius: "50%", border: `3px solid ${COLORS.border}`, borderTopColor: COLORS.accent, animation: "spin 1s linear infinite" }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.muted }}>Synchronizing tracker…</span>
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </Layout>
-  );
+  // Map exactly to the backend's calculated_status / probation_status values.
+  const cs = (p) => p.calculated_status || 'On Track';
+  const ps = (p) => (p.probation_status || '').toLowerCase();
+  const inProbation = probations.filter(p => ['in_probation', 'paused'].includes(ps(p))).length;
+  const overdue = probations.filter(p => cs(p) === 'Overdue').length;
+  const pending = probations.filter(p => ['Pending Form', 'Final Review Due'].includes(cs(p))).length;
+  const completed = probations.filter(p => ps(p) === 'completed').length;
 
   return (
     <Layout>
-      <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-        
-        {/* Header Section */}
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+      <div className="page active" id="page-probation">
+        <div className="page-header flex justify-between items-center" style={{ marginBottom: '24px' }}>
           <div>
-            <h1 style={{ fontSize: 26, fontWeight: 900, color: COLORS.text, letterSpacing: "-0.04em" }}>
-              Probation Milestone Tracker
-            </h1>
-            <p style={{ fontSize: 14, color: COLORS.muted, marginTop: 4 }}>
-              Systematic oversight of employee onboarding and cultural integration loops
-            </p>
+            <div className="page-title">Probation Milestone Tracker</div>
+            <div className="page-desc">Onboarding oversight — 30/60/80-day check-ins fire automatically</div>
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            {currentUser?.role === 'admin' && (
-              <button onClick={handleScanTriggers} style={{
-                background: COLORS.bg, border: `1px solid ${COLORS.border}`,
-                padding: "10px 18px", borderRadius: 12, fontSize: 13, fontWeight: 700,
-                color: COLORS.text, cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
-                transition: "all 0.2s"
-              }}>
-                <Zap size={16} color={COLORS.amber} /> Scan Milestones
+          {isAdmin && (
+            <div style={{ display: "flex", gap: '10px' }}>
+              <button onClick={handleScan} disabled={scanning} className="btn btn-secondary" style={{ display: "flex", alignItems: "center", gap: '8px', opacity: scanning ? 0.6 : 1 }}>
+                <Zap size={16} color="#F59E0B" /> {scanning ? 'Scanning…' : 'Scan Milestones'}
               </button>
-            )}
-            <button style={{
-              background: COLORS.accent, border: "none",
-              padding: "10px 18px", borderRadius: 12, fontSize: 13, fontWeight: 700,
-              color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
-              boxShadow: `0 8px 16px ${COLORS.accent}25`
-            }}>
-              <Calendar size={16} /> Schedule Export
-            </button>
-          </div>
+              <button onClick={() => setShowModal(true)} className="btn btn-primary" style={{ display: "flex", alignItems: "center", gap: '8px' }}>
+                <Plus size={16} /> Start Probation
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Stats Summary Panel */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 24 }}>
+        {/* Stats */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: '24px', marginBottom: '32px' }}>
           {[
-            { label: "Active Tracking", value: probations.length, icon: UserCheck, color: COLORS.accent },
-            { label: "Overdue Actions", value: probations.filter(p => p.calculated_status === 'Overdue').length, icon: AlertTriangle, color: COLORS.rose },
-            { label: "Due This Week", value: probations.filter(p => p.calculated_status === 'Pending Form').length, icon: Clock, color: COLORS.amber },
-            { label: "Completed Confirmations", value: probations.filter(p => p.calculated_status === 'Completed').length, icon: ShieldCheck, color: COLORS.emerald },
+            { label: "In Probation", value: inProbation, icon: UserCheck, color: 'var(--primary)' },
+            { label: "Overdue", value: overdue, icon: AlertTriangle, color: '#EF4444' },
+            { label: "Action Pending", value: pending, icon: Clock, color: '#F59E0B' },
+            { label: "Confirmed", value: completed, icon: ShieldCheck, color: '#10B981' },
           ].map((stat, i) => (
-            <div key={i} style={{
-              background: COLORS.card, border: `1.5px solid ${COLORS.border}`,
-              borderRadius: 20, padding: "20px", display: "flex", alignItems: "center", gap: 16,
-            }}>
-              <div style={{ width: 44, height: 44, borderRadius: 12, background: `${stat.color}10`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div key={i} className="card" style={{ padding: "20px", display: "flex", alignItems: "center", gap: '16px', flexDirection: 'row' }}>
+              <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: `${stat.color}15`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <stat.icon size={20} color={stat.color} />
               </div>
               <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em" }}>{stat.label}</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: COLORS.text }}>{stat.value}</div>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: "uppercase" }}>{stat.label}</div>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>{stat.value}</div>
               </div>
             </div>
           ))}
         </div>
 
-        {/* Main Tracker Table */}
-        <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 24, padding: "8px", display: "flex", flexDirection: "column" }}>
-          
-          {/* Table Toolbar */}
-          <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${COLORS.border}` }}>
-            <div style={{ position: "relative", width: 320 }}>
-              <Search size={16} color={COLORS.subtle} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-              <input 
-                type="text" 
-                placeholder="Search by employee or status..." 
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                style={{
-                  width: "100%", padding: "10px 14px 10px 40px", borderRadius: 12,
-                  border: `1.5px solid ${COLORS.border}`, background: COLORS.bg,
-                  fontSize: 13, fontWeight: 500, outline: "none", transition: "all 0.2s"
-                }}
-              />
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button style={{ padding: "10px 16px", borderRadius: 10, border: `1.5px solid ${COLORS.border}`, background: "#fff", display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, color: COLORS.muted, cursor: "pointer" }}>
-                <Filter size={14} /> Filter Set
-              </button>
+        {/* Table */}
+        <div className="card" style={{ padding: '0' }}>
+          <div style={{ padding: "16px 20px", borderBottom: '1px solid var(--border)' }}>
+            <div style={{ position: "relative", width: '320px' }}>
+              <Search size={16} color="var(--text-muted)" style={{ position: "absolute", left: '14px', top: "50%", transform: "translateY(-50%)" }} />
+              <input type="text" placeholder="Search by employee or status..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                style={{ width: "100%", padding: "10px 14px 10px 40px", borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--bg)', fontSize: '13px', outline: "none" }} />
             </div>
           </div>
 
-          {/* Actual Table */}
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
               <thead>
-                <tr style={{ background: `${COLORS.bg}50` }}>
-                  {["Employee", "DOJ", "Day 30", "Day 60", "Day 80", "Lifecycle Status", "Action"].map((h, i) => (
-                    <th key={i} style={{
-                      textAlign: "left", padding: "16px 20px", fontSize: 10, fontWeight: 800, color: COLORS.subtle,
-                      textTransform: "uppercase", letterSpacing: "0.08em", borderBottom: `1px solid ${COLORS.border}`
-                    }}>{h}</th>
+                <tr style={{ background: 'var(--bg)' }}>
+                  {["Employee", "Joined", "Days Elapsed", "Day 30", "Day 60", "Day 80", "Status", "Ends", ""].map((h, i) => (
+                    <th key={i} style={{ textAlign: "left", padding: "14px 20px", fontSize: '10px', fontWeight: 800, color: 'var(--text-muted)', textTransform: "uppercase", borderBottom: '1px solid var(--border)' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredProbations.map((prob) => (
-                  <tr key={prob.id} style={{ transition: "all 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = `${COLORS.accent}04`} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <td style={{ padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}` }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{ width: 36, height: 36, borderRadius: 10, background: COLORS.bg, border: `1.5px solid ${COLORS.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: COLORS.muted }}>
-                          {users[prob.employee_id]?.name?.charAt(0) || 'U'}
+                {filtered.map((prob) => (
+                  <tr key={prob.id}>
+                    <td style={{ padding: "16px 20px", borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: '12px' }}>
+                        <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--bg)', border: '1px solid var(--border)', display: "flex", alignItems: "center", justifyContent: "center", fontSize: '14px', fontWeight: 700, color: 'var(--text-muted)' }}>
+                          {prob.emp?.name?.charAt(0) || 'U'}
                         </div>
                         <div>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{users[prob.employee_id]?.name || `Employee #${prob.employee_id}`}</div>
-                          <div style={{ fontSize: 11, color: COLORS.muted }}>{users[prob.employee_id]?.email}</div>
+                          <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>{prob.emp?.name || `Employee #${prob.employee_id}`}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{prob.emp?.email}</div>
                         </div>
                       </div>
                     </td>
-                    <td style={{ padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}`, fontSize: 13, fontWeight: 600, color: COLORS.muted }}>
-                      {prob.date_of_joining}
-                    </td>
+                    <td style={{ padding: "16px 20px", borderBottom: '1px solid var(--border)', fontSize: '13px', color: 'var(--text-muted)' }}>{formatDate(prob.date_of_joining)}</td>
+                    <td style={{ padding: "16px 20px", borderBottom: '1px solid var(--border)', fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>{prob.working_days_elapsed ?? '—'}</td>
                     {[30, 60, 80].map(day => {
-                      const trigger = prob.triggers?.find(t => t.trigger_day === day);
-                      const isDone = trigger?.status === 'submitted';
-                      const isPending = trigger?.status === 'triggered';
+                      const m = milestone(prob, day);
                       return (
-                        <td key={day} style={{ padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}` }}>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <div style={{ height: 6, width: 40, background: isDone ? COLORS.emerald : isPending ? COLORS.amber : COLORS.bg, borderRadius: 3 }} />
-                            <div style={{ fontSize: 10, fontWeight: 700, color: isDone ? COLORS.emerald : isPending ? COLORS.amber : COLORS.subtle }}>
-                              {isDone ? 'Submitted' : isPending ? 'Pending' : 'Upcoming'}
-                            </div>
+                        <td key={day} style={{ padding: "16px 20px", borderBottom: '1px solid var(--border)' }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: '4px' }}>
+                            <div style={{ height: '6px', width: '40px', background: m.color, borderRadius: '3px' }} />
+                            <div style={{ fontSize: '10px', fontWeight: 700, color: m.text }}>{m.label}</div>
                           </div>
                         </td>
                       );
                     })}
-                    <td style={{ padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}` }}>
-                      <div style={{ display: "inline-flex", padding: "4px 10px", borderRadius: 8, background: `${getStatusColor(prob.calculated_status)}12`, color: getStatusColor(prob.calculated_status), fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>
+                    <td style={{ padding: "16px 20px", borderBottom: '1px solid var(--border)' }}>
+                      <div className="badge" style={{ background: `${statusColor(prob.calculated_status)}15`, color: statusColor(prob.calculated_status) }}>
                         {prob.calculated_status || 'On Track'}
                       </div>
                     </td>
-                    <td style={{ padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}` }}>
-                      <button 
-                        onClick={() => navigate(`/probation/${prob.employee_id}`)}
-                        style={{ border: "none", background: COLORS.bg, padding: "8px 12px", borderRadius: 8, color: COLORS.accent, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
-                      >
-                         Fill Form <ArrowUpRight size={14} />
+                    <td style={{ padding: "16px 20px", borderBottom: '1px solid var(--border)', fontSize: '12px', color: 'var(--text-muted)' }}>{formatDate(prob.probation_end_date)}</td>
+                    <td style={{ padding: "16px 20px", borderBottom: '1px solid var(--border)' }}>
+                      <button onClick={() => navigate(`/probation/${prob.employee_id}`)} className="btn btn-secondary btn-sm" style={{ display: "flex", alignItems: "center", gap: '6px' }}>
+                        Open <ArrowUpRight size={14} />
                       </button>
                     </td>
                   </tr>
@@ -250,16 +229,92 @@ export default function Probation() {
             </table>
           </div>
 
-          {filteredProbations.length === 0 && (
-            <div style={{ padding: "64px 0", textAlign: "center", color: COLORS.subtle }}>
-               <UserCheck size={48} style={{ opacity: 0.2, marginBottom: 16 }} />
-               <div style={{ fontSize: 16, fontWeight: 700 }}>No candidates in probation cycle</div>
-               <div style={{ fontSize: 13 }}>All team members have completed their integration roadmap.</div>
+          {loading && (
+            <div style={{ padding: "64px 0", textAlign: "center", color: 'var(--text-muted)' }}>
+              <RefreshCw size={32} style={{ opacity: 0.4, marginBottom: '12px', animation: 'spin 1s linear infinite' }} />
+              <div style={{ fontSize: '14px', fontWeight: 600 }}>Loading probation records…</div>
+              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+            </div>
+          )}
+          {!loading && filtered.length === 0 && (
+            <div style={{ padding: "64px 0", textAlign: "center", color: 'var(--text-muted)' }}>
+              <UserCheck size={48} style={{ opacity: 0.2, marginBottom: '16px' }} />
+              <div style={{ fontSize: '16px', fontWeight: 700 }}>No one in probation</div>
+              <div style={{ fontSize: '13px' }}>{isAdmin ? 'Start a probation to begin tracking onboarding milestones.' : 'None of your reports are in probation.'}</div>
             </div>
           )}
         </div>
 
+        {showModal && (
+          <ProbationModal
+            users={allUsers}
+            existing={probations.map(p => p.employee_id)}
+            onClose={() => setShowModal(false)}
+            onSuccess={() => { setShowModal(false); load(); }}
+          />
+        )}
       </div>
     </Layout>
+  );
+}
+
+function ProbationModal({ users, existing, onClose, onSuccess }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const eligible = (users || []).filter(u => u.role === 'member' && !existing.includes(u.id));
+  const [employeeId, setEmployeeId] = useState(eligible[0]?.id ? String(eligible[0].id) : '');
+  const [doj, setDoj] = useState(() => {
+    const u = eligible[0];
+    return (u?.date_of_joining || today).slice(0, 10);
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!employeeId) { toast.error('Select an employee'); return; }
+    setSubmitting(true);
+    try {
+      await probationService.create({ employee_id: Number(employeeId), date_of_joining: doj });
+      toast.success('Probation started');
+      onSuccess();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to start probation');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <div style={{ background: COLORS.surface, borderRadius: 20, padding: 32, width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", gap: 20, boxShadow: "0 20px 50px rgba(0,0,0,0.2)" }}>
+        <div>
+          <h3 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text }}>Start Probation</h3>
+          <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 4 }}>30/60/80-day check-ins fire automatically based on the join date.</p>
+        </div>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase" }}>Employee</label>
+            <select value={employeeId} onChange={(e) => {
+              setEmployeeId(e.target.value);
+              const u = eligible.find(x => String(x.id) === e.target.value);
+              if (u?.date_of_joining) setDoj(u.date_of_joining.slice(0, 10));
+            }} style={{ padding: "10px 14px", border: `1.5px solid ${COLORS.border}`, borderRadius: 10, fontSize: 13, background: "#fff" }}>
+              {eligible.length === 0 && <option value="">No eligible employees</option>}
+              {eligible.map(u => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase" }}>Date of Joining</label>
+            <input type="date" value={doj} onChange={(e) => setDoj(e.target.value)} required
+              style={{ padding: "10px 14px", border: `1.5px solid ${COLORS.border}`, borderRadius: 10, fontSize: 13 }} />
+          </div>
+          <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+            <button type="button" onClick={onClose} style={{ flex: 1, padding: "12px", borderRadius: 11, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
+            <button type="submit" disabled={submitting || eligible.length === 0} style={{ flex: 2, padding: "12px", borderRadius: 11, border: "none", background: COLORS.accent, color: "#fff", fontWeight: 700, cursor: "pointer", opacity: (submitting || eligible.length === 0) ? 0.6 : 1 }}>
+              {submitting ? 'Starting…' : 'Start Probation'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }

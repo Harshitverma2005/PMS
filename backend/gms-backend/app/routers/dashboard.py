@@ -58,6 +58,7 @@ def team_dashboard(
     current_user: User = Depends(get_current_user)
 ):
     require_manager_or_admin(current_user)
+    from app.services.probation_service import probation_service
 
     if current_user.role == UserRole.ADMIN:
         members = db.query(User).filter(User.is_active == True).all()
@@ -145,7 +146,7 @@ def team_dashboard(
                 "id": p.id,
                 "employee_name": p.employee.name if p.employee else "Unknown",
                 "status": probation_service.get_calculated_status(p),
-                "end_date": p.probation_end_date.isoformat() if p.probation_end_date else None,
+                "end_date": probation_service.get_probation_end_date(p).isoformat() if probation_service.get_probation_end_date(p) else None,
                 "milestones": [
                     {"day": t.trigger_day, "status": t.status.value} for t in p.triggers
                 ]

@@ -62,9 +62,34 @@ def trigger_cycle(
     require_admin(current_user)
     try:
         cycle = review_service.trigger_cycle(db, cycle_id, current_user.id)
+        _nudge_employees_on_cycle_start(db, cycle_id, current_user)
         return _enrich_cycle(cycle)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _nudge_employees_on_cycle_start(db: Session, cycle_id: int, actor: User):
+    """When a cycle is activated, send each employee a readiness nudge listing
+    what they still need to do to be review-ready (in-app notification)."""
+    from app.services import readiness_service
+    from app.services.notification_service import notification_service
+    from app.models.review import ReviewForm
+    from app.enums import ReviewFormType
+
+    forms = db.query(ReviewForm).filter(
+        ReviewForm.review_cycle_id == cycle_id,
+        ReviewForm.form_type == ReviewFormType.SELF_ASSESSMENT,
+    ).all()
+    for f in forms:
+        emp = db.query(User).filter(User.id == f.employee_id).first()
+        if not emp:
+            continue
+        try:
+            data = readiness_service.get_readiness(db, emp.id)
+            notification_service.notify_readiness_nudge(db, emp, data["prompts"], actor.name)
+        except Exception:
+            # A nudge failure must never block cycle activation.
+            continue
 
 
 @router.post("/review-cycles/{cycle_id}/close", response_model=ReviewCycleResponse)
@@ -94,6 +119,34 @@ def get_compliance(
     return review_service.get_compliance(db, cycle_id)
 
 
+@router.get("/review-cycles/{cycle_id}/results")
+def get_cycle_results(
+    cycle_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Admin-only: per-employee review outcomes (self + manager ratings/feedback)."""
+    require_admin(current_user)
+    cycle = review_service.get_cycle(db, cycle_id)
+    if not cycle:
+        raise HTTPException(status_code=404, detail="Cycle not found")
+    return review_service.get_cycle_results(db, cycle_id)
+
+
+@router.get("/review-cycles/{cycle_id}/upward-feedback")
+def get_upward_feedback(
+    cycle_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Admin-only: employees' upward feedback about their managers for this cycle."""
+    require_admin(current_user)
+    cycle = review_service.get_cycle(db, cycle_id)
+    if not cycle:
+        raise HTTPException(status_code=404, detail="Cycle not found")
+    return review_service.get_upward_feedback(db, cycle_id)
+
+
 # ── Forms ─────────────────────────────────────────────────────────────────
 
 @router.get("/review-forms/", response_model=List[ReviewFormResponse])
@@ -115,6 +168,26 @@ def get_form(
     form = review_service.get_form(db, form_id)
     if not form:
         raise HTTPException(status_code=404, detail="Form not found")
+
+    from app.services.hierarchy_service import is_direct_manager
+    from app.enums import ReviewFormType
+    role = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
+
+    if form.form_type == ReviewFormType.UPWARD_FEEDBACK:
+        # Upward feedback is admin-only; the rater may see their own. The rated
+        # manager must NOT be able to read it (no manager_id / direct-manager path).
+        allowed = role.lower() == 'admin' or form.employee_id == current_user.id
+    else:
+        # Only the employee, their (managing) manager, or an admin may view a form.
+        allowed = (
+            role.lower() == 'admin'
+            or form.employee_id == current_user.id
+            or getattr(form, 'manager_id', None) == current_user.id
+            or getattr(form, 'manager_of_record_id', None) == current_user.id
+            or is_direct_manager(db, current_user.id, form.employee_id)
+        )
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Not authorized to view this review form")
     return _scrub_form(form, current_user.id)
 
 

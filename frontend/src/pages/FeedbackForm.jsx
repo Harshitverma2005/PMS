@@ -6,7 +6,7 @@ import {
   Activity, Award, Target, MessageSquare
 } from 'lucide-react';
 import Layout from '../components/Layout';
-import { goalService, feedbackService } from '../api';
+import { feedbackService } from '../api';
 import toast from 'react-hot-toast';
 
 const COLORS = {
@@ -25,32 +25,56 @@ const COLORS = {
   subtle: "#9CA3AF",
 };
 
+const unwrap = (res) => {
+  const d = res?.data;
+  if (Array.isArray(d)) return d[0] ?? null;
+  if (d && Array.isArray(d.data)) return d.data[0] ?? null;
+  if (d && d.data && !Array.isArray(d.data)) return d.data;
+  return d ?? null;
+};
+
 export default function FeedbackForm() {
   const { id } = useParams();
-  const [form, setForm] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [responses, setResponses] = useState({});
-  const [rating, setRating] = useState('meets');
-  const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    loadForm();
-  }, [id]);
+  const [form, setForm] = useState(null);
+  const [employee, setEmployee] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const loadForm = async () => {
-    try {
-      const response = await feedbackService.getById(id);
-      setForm(response.data);
-      if (response.data.responses) setResponses(response.data.responses);
-      if (response.data.rating) setRating(response.data.rating);
-    } catch (error) {
-      toast.error('Failed to load performance window');
-      navigate('/performance');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [responses, setResponses] = useState({});
+  const [rating, setRating] = useState('meets');       // manager_feedback: below/meets/above
+  const [overallRating, setOverallRating] = useState(0); // upward_feedback: 1–5
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await feedbackService.getById(id);
+        const data = unwrap(res);
+        if (!active) return;
+        if (!data) {
+          toast.error('Feedback form not found');
+          navigate('/performance');
+          return;
+        }
+        setForm(data);
+        setEmployee(data.employee ?? null);
+        setResponses(data.form_data || {});
+        setRating(data.rating || 'meets');
+        setOverallRating(data.final_rating || 0);
+      } catch (err) {
+        if (active) {
+          toast.error('Feedback form not found');
+          navigate('/performance');
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [id, navigate]);
 
   const handleResponseChange = (question, value) => {
     setResponses({ ...responses, [question]: value });
@@ -58,18 +82,25 @@ export default function FeedbackForm() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const isUpwardForm = form?.form_type === 'upward_feedback';
+    const isMgrForm = form?.form_type === 'manager_feedback';
+
+    // Upward feedback uses a direct 1–5 rating; require a selection.
+    if (isUpwardForm && !(overallRating >= 1 && overallRating <= 5)) {
+      return toast.error('Please give your manager an overall rating (1–5)');
+    }
+
     setSubmitting(true);
     try {
-      const data = {
-        form_data: { ...responses, rating },
-        final_rating: Math.round(parseFloat(calculateScore(responses))) || null
-      };
-      await feedbackService.submitForm(id, data);
-      toast.success('Strategy feedback submitted');
+      const ratingMap = { below_expectations: 2, meets: 3, above_expectations: 4 };
+      const body = { form_data: responses };
+      if (isUpwardForm) body.final_rating = Number(overallRating);
+      else if (isMgrForm) body.final_rating = ratingMap[rating] || 3;
+      await feedbackService.submitForm(id, body);
+      toast.success('Review submitted');
       navigate('/performance');
-    } catch (error) {
-      toast.error('Submission failed');
-    } finally {
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to submit review');
       setSubmitting(false);
     }
   };
@@ -80,84 +111,101 @@ export default function FeedbackForm() {
     return (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
   };
 
-  if (loading) return (
-    <Layout>
-      <div style={{ height: "60vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ width: 32, height: 32, borderRadius: "50%", border: `3px solid ${COLORS.border}`, borderTopColor: COLORS.accent, animation: "spin 1s linear infinite" }} />
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </Layout>
-  );
 
-  const isSelf = form?.form_type === 'SELF_ASSESSMENT';
+  const isUpward = form?.form_type === 'upward_feedback';
+  const isManagerForm = form?.form_type === 'manager_feedback';
+  const isSelf = form?.form_type === 'self_assessment';
+  const needsRating = isManagerForm || isUpward;
   const isSubmitted = form?.status === 'submitted';
+  const managerName = form?.manager_of_record_name || form?.manager?.name;
+
+  if (loading) {
+    return (
+      <Layout>
+        <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-muted)' }}>
+          Loading feedback form…
+        </div>
+      </Layout>
+    );
+  }
 
   if (!form) return null;
 
   return (
     <Layout>
-      <div style={{ display: "flex", flexDirection: "column", gap: 32, maxWidth: 900, margin: "0 auto" }}>
+      <div className="page active" id="page-feedback-form">
         
         {/* Header Section */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-           <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+        <div className="page-header flex justify-between items-center" style={{ marginBottom: '24px' }}>
+           <div style={{ display: "flex", alignItems: "center", gap: '20px' }}>
               <div style={{
-                width: 56, height: 56, borderRadius: 16,
-                background: isSelf ? `${COLORS.accent}12` : `${COLORS.emerald}12`,
+                width: '56px', height: '56px', borderRadius: '16px',
+                background: isSelf ? 'var(--primary-light)' : isUpward ? 'rgba(124,58,237,0.1)' : 'rgba(16,185,129,0.1)',
                 display: "flex", alignItems: "center", justifyContent: "center",
               }}>
-                {isSelf ? <User size={28} color={COLORS.accent} /> : <Shield size={28} color={COLORS.emerald} />}
+                {isSelf ? <User size={28} color="var(--primary)" /> : isUpward ? <Star size={28} color="#7C3AED" /> : <Shield size={28} color="#10B981" />}
               </div>
               <div>
-                <h1 style={{ fontSize: 24, fontWeight: 800, color: COLORS.text, letterSpacing: "-0.04em" }}>
-                   {isSelf ? 'Self-Review Reflection' : `Evaluating: ${form.employee?.name}`}
-                </h1>
-                <p style={{ fontSize: 14, color: COLORS.muted, marginTop: 4 }}>{form.cycle?.name || `${form.context} Review`} — Period Q1 2026</p>
+                <div className="page-title">
+                   {isSelf ? 'Self-Review Reflection' : isUpward ? `Upward Feedback${managerName ? `: ${managerName}` : ' — Rate Your Manager'}` : `Evaluating: ${employee?.name}`}
+                </div>
+                <div className="page-desc">{form.cycle?.name || 'Performance Review'}</div>
               </div>
            </div>
            {isSubmitted && (
-              <div style={{
-                padding: "8px 16px", background: `${COLORS.emerald}12`,
-                color: COLORS.emerald, borderRadius: 10, fontSize: 13, fontWeight: 800,
-                display: "flex", alignItems: "center", gap: 8,
-              }}>
+              <div className="badge" style={{ background: 'rgba(16,185,129,0.1)', color: '#10B981', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <ClipboardCheck size={16} /> RECORD FINALIZED
               </div>
            )}
         </div>
 
-        {/* Anonymity Alert */}
-        {form.status === 'pending' && !isSelf && (
+        {/* Anonymity Alert — manager review of an employee */}
+        {form.status === 'pending' && isManagerForm && (
           <div style={{
-            background: `${COLORS.amber}08`, border: `1.5px solid ${COLORS.amber}30`,
-            borderRadius: 16, padding: "16px 20px", display: "flex", gap: 12, alignItems: "flex-start",
+            background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
+            borderRadius: '12px', padding: "16px 20px", display: "flex", gap: '12px', alignItems: "flex-start",
+            marginBottom: '24px'
           }}>
-             <AlertTriangle size={18} color={COLORS.amber} style={{ flexShrink: 0, marginTop: 2 }} />
-             <p style={{ fontSize: 13, color: COLORS.amber, fontWeight: 600, lineHeight: 1.5 }}>
+             <AlertTriangle size={18} color="#F59E0B" style={{ flexShrink: 0, marginTop: '2px' }} />
+             <p style={{ fontSize: '13px', color: '#F59E0B', fontWeight: 600, lineHeight: 1.5 }}>
                 <b>Anonymity Protocol:</b> Your feedback will remain restricted from the member until they have also submitted their self-review form for this cycle.
              </p>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 24, paddingBottom: 100 }}>
+        {/* Confidentiality note — upward feedback (admin-only) */}
+        {form.status !== 'submitted' && isUpward && (
+          <div style={{
+            background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.3)',
+            borderRadius: '12px', padding: "16px 20px", display: "flex", gap: '12px', alignItems: "flex-start",
+            marginBottom: '24px'
+          }}>
+             <Shield size={18} color="#7C3AED" style={{ flexShrink: 0, marginTop: '2px' }} />
+             <p style={{ fontSize: '13px', color: '#7C3AED', fontWeight: 600, lineHeight: 1.5 }}>
+                <b>Confidential:</b> This feedback about your manager is shared with administrators only. Your manager will not see it or know how you rated them.
+             </p>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: '24px', paddingBottom: '100px' }}>
           
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-            <Section title="Competency & Results" icon={Activity}>
-              <RatingQuestion label="Quality of Deliverables" name="quality_deliverables" value={responses.quality_deliverables} onChange={handleResponseChange} disabled={isSubmitted} />
-              <RatingQuestion label="Task Execution Velocity" name="timeliness" value={responses.timeliness} onChange={handleResponseChange} disabled={isSubmitted} />
-              <RatingQuestion label="Innovation & Solving" name="innovation" value={responses.innovation} onChange={handleResponseChange} disabled={isSubmitted} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: '24px' }}>
+            <Section title={isUpward ? 'Leadership & Direction' : 'Competency & Results'} icon={Activity}>
+              <RatingQuestion label={isUpward ? 'Clarity of Direction' : 'Quality of Deliverables'} name="quality_deliverables" value={responses.quality_deliverables} onChange={handleResponseChange} disabled={isSubmitted} />
+              <RatingQuestion label={isUpward ? 'Decision-Making' : 'Task Execution Velocity'} name="timeliness" value={responses.timeliness} onChange={handleResponseChange} disabled={isSubmitted} />
+              <RatingQuestion label={isUpward ? 'Removes Blockers' : 'Innovation & Solving'} name="innovation" value={responses.innovation} onChange={handleResponseChange} disabled={isSubmitted} />
             </Section>
 
-            <Section title="Collaboration & Impact" icon={Target}>
-              <RatingQuestion label="Teamwork & Alignment" name="collaboration" value={responses.collaboration} onChange={handleResponseChange} disabled={isSubmitted} />
-              <RatingQuestion label="Strategic Influence" name="impact" value={responses.impact} onChange={handleResponseChange} disabled={isSubmitted} />
-              <div style={{ height: 60 }} /> {/* Spacer */}
+            <Section title={isUpward ? 'Support & Fairness' : 'Collaboration & Impact'} icon={Target}>
+              <RatingQuestion label={isUpward ? 'Support & Coaching' : 'Teamwork & Alignment'} name="collaboration" value={responses.collaboration} onChange={handleResponseChange} disabled={isSubmitted} />
+              <RatingQuestion label={isUpward ? 'Fairness & Recognition' : 'Strategic Influence'} name="impact" value={responses.impact} onChange={handleResponseChange} disabled={isSubmitted} />
+              <div style={{ height: '60px' }} /> {/* Spacer */}
             </Section>
           </div>
 
-          <Section title="Narrative & Evolution" icon={MessageSquare}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <label style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase" }}>Key Achievements & Growth Areas</label>
+          <Section title={isUpward ? 'Comments' : 'Narrative & Evolution'} icon={MessageSquare}>
+            <div style={{ display: "flex", flexDirection: "column", gap: '12px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: "uppercase" }}>{isUpward ? 'What your manager does well & where they could grow' : 'Key Achievements & Growth Areas'}</label>
               <textarea
                 value={responses.comments || ''}
                 onChange={(e) => handleResponseChange('comments', e.target.value)}
@@ -165,26 +213,53 @@ export default function FeedbackForm() {
                 rows="6"
                 placeholder="Discuss key wins, specific examples, and future trajectory..."
                 style={{ 
-                  padding: "16px", borderRadius: 16, border: `1.5px solid ${COLORS.border}`, 
-                  fontSize: 14, outline: "none", background: COLORS.bg, resize: "none", lineHeight: 1.6,
+                  padding: "16px", borderRadius: '12px', border: '1px solid var(--border)', 
+                  fontSize: '14px', outline: "none", background: 'var(--bg)', resize: "none", lineHeight: 1.6,
                 }}
               />
             </div>
           </Section>
 
-          {!isSelf && (
+          {isUpward && (
+             <Section title="Overall Manager Rating" icon={Award}>
+                <div style={{ display: "flex", flexDirection: "column", gap: '12px' }}>
+                   <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: "uppercase" }}>How would you rate your manager overall? (1–5)</label>
+                   <div style={{ display: "flex", gap: '10px' }}>
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <button
+                          key={n} type="button" onClick={() => setOverallRating(n)} disabled={isSubmitted}
+                          style={{
+                            width: '52px', height: '52px', borderRadius: '14px', border: "none",
+                            background: overallRating === n ? '#7C3AED' : 'var(--bg)',
+                            color: overallRating === n ? "#fff" : 'var(--text-muted)',
+                            fontSize: '16px', fontWeight: 800, cursor: isSubmitted ? "default" : "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            boxShadow: overallRating === n ? '0 4px 12px rgba(124,58,237,0.4)' : "none",
+                            transition: "all 0.15s",
+                          }}
+                        >
+                          {overallRating === n ? <Star size={20} fill="currentColor" /> : n}
+                        </button>
+                      ))}
+                   </div>
+                   {overallRating > 0 && <div style={{ fontSize: '13px', fontWeight: 700, color: '#7C3AED' }}>{overallRating}/5 selected</div>}
+                </div>
+             </Section>
+          )}
+
+          {isManagerForm && (
              <Section title="Administrative Verdict" icon={Award}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                   <label style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase" }}>Overall Rank Recommendation</label>
-                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: '16px' }}>
+                   <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: "uppercase" }}>Overall Rank Recommendation</label>
+                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: '16px' }}>
                       {['below_expectations', 'meets', 'above_expectations'].map(r => (
                         <button
                           key={r} type="button" onClick={() => setRating(r)} disabled={isSubmitted}
                           style={{
-                            padding: "16px", borderRadius: 14, border: rating === r ? `2px solid ${COLORS.accent}` : `1.5px solid ${COLORS.border}`,
-                            background: rating === r ? `${COLORS.accent}08` : "#fff",
-                            color: rating === r ? COLORS.accent : COLORS.muted,
-                            fontWeight: 700, fontSize: 13, textTransform: "capitalize", cursor: isSubmitted ? "default" : "pointer",
+                            padding: "16px", borderRadius: '12px', border: rating === r ? '2px solid var(--primary)' : '1px solid var(--border)',
+                            background: rating === r ? 'var(--primary-light)' : "#fff",
+                            color: rating === r ? 'var(--primary)' : 'var(--text-muted)',
+                            fontWeight: 700, fontSize: '13px', textTransform: "capitalize", cursor: isSubmitted ? "default" : "pointer",
                             transition: "all 0.2s",
                           }}
                         >
@@ -198,29 +273,27 @@ export default function FeedbackForm() {
 
           {!isSubmitted && (
             <div style={{
-              position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)",
-              width: "100%", maxWidth: 900, padding: "0 24px", zIndex: 100,
+              position: "fixed", bottom: '32px', left: "50%", transform: "translateX(-50%)",
+              width: "100%", maxWidth: '900px', padding: "0 24px", zIndex: 100,
             }}>
                <div style={{
                  background: "rgba(255,255,255,0.8)", backdropFilter: "blur(12px)",
-                 border: `1px solid ${COLORS.border}`, borderRadius: 20, padding: "16px 24px",
+                 border: '1px solid var(--border)', borderRadius: '16px', padding: "16px 24px",
                  display: "flex", justifyContent: "space-between", alignItems: "center",
                  boxShadow: "0 20px 40px rgba(0,0,0,0.1)",
                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                     <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.muted }}>EXECUTION SCORE:</div>
-                     <div style={{ fontSize: 24, fontWeight: 800, color: COLORS.accent }}>{calculateScore(responses)} <span style={{ fontSize: 14, color: COLORS.muted }}>/ 5.0</span></div>
+                  <div style={{ display: "flex", alignItems: "center", gap: '16px' }}>
+                     <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-muted)' }}>EXECUTION SCORE:</div>
+                     <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--primary)' }}>{calculateScore(responses)} <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>/ 5.0</span></div>
                   </div>
-                  <div style={{ display: "flex", gap: 12 }}>
-                     <button type="button" onClick={() => navigate(-1)}
-                       style={{ padding: "12px 24px", borderRadius: 12, border: `1.5px solid ${COLORS.border}`, background: "#fff", fontWeight: 700, cursor: "pointer" }}>
+                  <div style={{ display: "flex", gap: '12px' }}>
+                     <button type="button" onClick={() => navigate(-1)} className="btn btn-secondary">
                        Dismiss
                      </button>
-                     <button type="submit" disabled={submitting}
+                     <button type="submit" disabled={submitting} className="btn btn-primary"
                        style={{ 
-                         padding: "12px 32px", borderRadius: 12, border: "none", background: COLORS.accent, color: "#fff", 
-                         fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
-                         boxShadow: `0 8px 20px ${COLORS.accent}33`, opacity: submitting ? 0.7 : 1,
+                         display: "flex", alignItems: "center", gap: '10px',
+                         opacity: submitting ? 0.7 : 1,
                        }}>
                         {submitting ? "Deploying..." : "Submit Record"} <Save size={16} />
                      </button>
@@ -236,16 +309,14 @@ export default function FeedbackForm() {
 
 function Section({ title, icon: Icon, children }) {
   return (
-    <div style={{
-      background: COLORS.card, border: `1.5px solid ${COLORS.border}`,
-      borderRadius: 24, padding: 32, display: "flex", flexDirection: "column", gap: 24,
-      boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+    <div className="card" style={{
+      padding: '32px', display: "flex", flexDirection: "column", gap: '24px'
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, borderBottom: `1px solid ${COLORS.bg}`, paddingBottom: 20 }}>
-         <div style={{ width: 32, height: 32, borderRadius: 8, background: COLORS.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Icon size={16} color={COLORS.muted} />
+      <div style={{ display: "flex", alignItems: "center", gap: '12px', borderBottom: '1px solid var(--bg)', paddingBottom: '20px' }}>
+         <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--bg)', display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Icon size={16} color="var(--text-muted)" />
          </div>
-         <h2 style={{ fontSize: 16, fontWeight: 800, color: COLORS.text }}>{title}</h2>
+         <h2 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text)' }}>{title}</h2>
       </div>
       {children}
     </div>
@@ -254,19 +325,19 @@ function Section({ title, icon: Icon, children }) {
 
 function RatingQuestion({ label, name, value, onChange, disabled }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <label style={{ fontSize: 12, fontWeight: 700, color: COLORS.text }}>{label}</label>
-      <div style={{ display: "flex", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: '10px' }}>
+      <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>{label}</label>
+      <div style={{ display: "flex", gap: '8px' }}>
         {[1, 2, 3, 4, 5].map((num) => (
           <button
             key={num} type="button" disabled={disabled} onClick={() => onChange(name, num)}
             style={{
-              width: 44, h: 44, borderRadius: 12, border: "none",
-              background: value === num ? COLORS.accent : COLORS.bg,
-              color: value === num ? "#fff" : COLORS.muted,
-              fontSize: 14, fontWeight: 800, cursor: disabled ? "default" : "pointer",
+              width: '44px', height: '44px', borderRadius: '12px', border: "none",
+              background: value === num ? 'var(--primary)' : 'var(--bg)',
+              color: value === num ? "#fff" : 'var(--text-muted)',
+              fontSize: '14px', fontWeight: 700, cursor: disabled ? "default" : "pointer",
               transition: "all 0.2s", display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: value === num ? `0 4px 10px ${COLORS.accent}40` : "none",
+              boxShadow: value === num ? '0 4px 10px rgba(37,99,235,0.4)' : "none",
             }}
           >
             {value === num ? <Star size={18} fill="currentColor" /> : num}

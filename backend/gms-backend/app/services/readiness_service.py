@@ -186,3 +186,19 @@ def get_team_readiness(db: Session, manager_id: int) -> List[dict]:
         results.append(r)
     results.sort(key=lambda x: x["score"])
     return results
+
+
+def get_all_employees_readiness(db: Session) -> List[dict]:
+    """Admin view — readiness for every member-employee (legacy @opstree.com seed
+    accounts excluded), sorted ascending by score (least prepared first)."""
+    members = db.query(User).filter(User.role == UserRole.MEMBER).all()
+    results = []
+    for emp in members:
+        if (emp.email or "").endswith("@opstree.com"):
+            continue
+        r = get_readiness(db, emp.id)
+        r["employee_id"] = emp.id
+        r["employee_name"] = emp.name
+        results.append(r)
+    results.sort(key=lambda x: x["score"])
+    return results

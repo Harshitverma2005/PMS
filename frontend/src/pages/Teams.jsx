@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Plus, Edit, Trash2, Users as UsersIcon,
   ShieldCheck, ArrowUpRight, ChevronRight,
   Target, Activity, MoreHorizontal, Zap, RefreshCw, AlertTriangle
 } from 'lucide-react';
 import Layout from '../components/Layout';
-import { teamService, userService, goalService, feedbackService } from '../api';
 import { useAuthStore } from '../store/auth';
+import { teamService, userService } from '../api';
 import toast from 'react-hot-toast';
 
 const COLORS = {
@@ -26,184 +25,168 @@ const COLORS = {
   subtle: "#9CA3AF",
 };
 
+function unwrapList(res) {
+  const d = res?.data;
+  if (Array.isArray(d)) return d;
+  if (Array.isArray(d?.data)) return d.data;
+  return [];
+}
+
 export default function Teams() {
-  const { user: currentUser } = useAuthStore();
+  const currentUser = useAuthStore((s) => s.user);
   const [teams, setTeams] = useState([]);
   const [users, setUsers] = useState([]);
-  const [feedbacks, setFeedbacks] = useState([]);
-  const [editingTeam, setEditingTeam] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [goals, setGoals] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [error, setError] = useState(false);
-  
-  const isAdmin = currentUser?.role === 'admin';  
-  useEffect(() => {
-    loadData();
-  }, []);
+  const [editingTeam, setEditingTeam] = useState(null);
 
-  const loadData = async () => {
-    setError(false);
+  const isAdmin = currentUser?.role === 'admin';
+
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [teamsRes, usersRes, goalsRes, feedbacksRes] = await Promise.all([
+      const [teamRes, userRes] = await Promise.all([
         teamService.getAll(),
-        userService.getAll(),
-        goalService.getAll(),
-        feedbackService.getAll()
+        userService.getAll().catch(() => ({ data: [] })),
       ]);
-      setTeams(teamsRes.data);
-      setUsers(usersRes.data);
-      setGoals(goalsRes.data);
-      setFeedbacks(feedbacksRes.data);
-    } catch (error) {
-      setError(true);
-      toast.error('Failed to load team data');
+      let teamList = unwrapList(teamRes);
+      const userList = unwrapList(userRes);
+      setUsers(userList);
+
+      // Manager view: only teams they lead
+      if (currentUser?.role === 'manager') {
+        teamList = teamList.filter(t => t.manager_id === currentUser.id);
+      }
+      setTeams(teamList);
+    } catch (err) {
+      toast.error('Failed to load teams');
+      setTeams([]);
+      setUsers([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (currentUser?.role === 'admin' || currentUser?.role === 'manager') {
+      fetchData();
+    } else {
+      setLoading(false);
+    }
+  }, [currentUser, fetchData]);
 
   const handleDelete = async (id) => {
     if (!confirm('Dissolve this team? This will unassign all members.')) return;
     try {
       await teamService.delete(id);
       toast.success('Team dissolved');
-      loadData();
-    } catch (error) {
-      toast.error('Action failed');
+      fetchData();
+    } catch (err) {
+      toast.error('Failed to dissolve team');
     }
   };
 
-  if (loading) return (
-    <Layout>
-      <div style={{ height: "60vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ width: 32, height: 32, borderRadius: "50%", border: `3px solid ${COLORS.border}`, borderTopColor: COLORS.accent, animation: "spin 1s linear infinite" }} />
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </Layout>
-  );
+  // A manager only "sees" their own direct reports; an admin sees the whole team roster.
+  const membersOf = (team) =>
+    currentUser?.role === 'manager'
+      ? users.filter(u => u.manager_id === currentUser.id && u.team_id === team.id)
+      : users.filter(u => u.team_id === team.id);
 
-  if (error) return (
-    <Layout>
-      <div style={{ height: "60vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 24 }}>
-        <div style={{ width: 64, height: 64, borderRadius: 20, background: `${COLORS.rose}10`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <AlertTriangle size={32} color={COLORS.rose} />
+  const memberCount = (team) => membersOf(team).length;
+
+  const totalVisibleMembers = currentUser?.role === 'manager'
+    ? users.filter(u => u.manager_id === currentUser.id).length
+    : users.length;
+
+  if (currentUser?.role !== 'admin' && currentUser?.role !== 'manager') {
+    return (
+      <Layout>
+        <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+          <ShieldCheck size={48} className="text-gray-300 mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900">Access Denied</h2>
+          <p className="text-gray-500 mt-2">You do not have permission to view Organizational Squads.</p>
         </div>
-        <div style={{ textAlign: "center" }}>
-          <h2 style={{ fontSize: 20, fontWeight: 800, color: COLORS.text }}>Failed to synchronize data</h2>
-          <p style={{ fontSize: 14, color: COLORS.muted, marginTop: 6 }}>The strategy engine experienced a connection timeout or server error.</p>
-        </div>
-        <button onClick={loadData} style={{
-          background: COLORS.accent, border: "none", padding: "12px 24px", borderRadius: 12,
-          color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 10,
-          cursor: "pointer", boxShadow: `0 8px 20px ${COLORS.accent}33`, transition: "all 0.2s",
-        }}>
-          <RefreshCw size={18} /> Retry Synchronization
-        </button>
-      </div>
-    </Layout>
-  );
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
-      <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+      <div className="page active" id="page-teams">
 
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div className="page-header flex justify-between items-center" style={{ marginBottom: '24px' }}>
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 800, color: COLORS.text, letterSpacing: "-0.03em" }}>Squads & Brigades</h1>
-            <p style={{ fontSize: 14, color: COLORS.muted, marginTop: 4 }}>Organisational structure and cross-functional performance tracking</p>
+            <div className="page-title">Squads & Brigades</div>
+            <div className="page-desc">Organisational structure and cross-functional performance tracking</div>
           </div>
           {isAdmin && (
-            <button onClick={() => { setEditingTeam(null); setShowModal(true); }}
-              style={{
-                background: COLORS.accent, border: "none",
-                padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 700,
-                color: "#fff", display: "flex", alignItems: "center", gap: 8,
-                boxShadow: `0 4px 12px ${COLORS.accent}33`, cursor: "pointer",
-              }}>
-              <Plus size={16} /> Form New Squad
+            <button onClick={() => { setEditingTeam(null); setShowModal(true); }} className="btn btn-primary">
+              <Plus size={16} style={{marginRight: '8px'}} /> Form New Squad
             </button>
           )}
         </div>
 
         {/* Global Performance Summary */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: '24px', marginBottom: '32px' }}>
           {[
-            { label: "Active Squads", value: teams.length, icon: UsersIcon, color: COLORS.accent },
-            { label: "Total Members", value: users.length, icon: ShieldCheck, color: COLORS.emerald },
-            {
-              label: "Compliance Rate",
-              value: users.length > 0
-                ? `${Math.round((feedbacks.filter(f => f.status === 'submitted').length / (users.length * 2 || 1)) * 100)}%`
-                : "0%",
-              icon: Activity, color: COLORS.violet
-            },
+            { label: "Active Squads", value: teams.length, icon: UsersIcon, color: 'var(--primary)' },
+            { label: "Total Members", value: totalVisibleMembers, icon: ShieldCheck, color: '#10B981' },
+            { label: "Managed Teams", value: teams.filter(t => t.manager_id).length, icon: Activity, color: '#8B5CF6' },
           ].map((stat, i) => (
-            <div key={i} style={{
-              background: COLORS.card, border: `1px solid ${COLORS.border}`,
-              borderRadius: 16, padding: "16px 20px", display: "flex", alignItems: "center", gap: 16,
-            }}>
-              <div style={{ width: 40, height: 40, borderRadius: 10, background: `${stat.color}10`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div key={i} className="card" style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: '16px', flexDirection: 'row' }}>
+              <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: `${stat.color}15`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <stat.icon size={18} color={stat.color} />
               </div>
               <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase" }}>{stat.label}</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: COLORS.text }}>{stat.value}</div>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: "uppercase" }}>{stat.label}</div>
+                <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text)' }}>{stat.value}</div>
               </div>
             </div>
           ))}
         </div>
 
         {/* Team Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: '24px' }}>
           {(Array.isArray(teams) ? teams : []).map((team) => {
-            const teamMembers = Array.isArray(team.members) ? team.members : [];
-            const teamMemberIds = teamMembers.map(m => m.id);
-            const teamGoals = (Array.isArray(goals) ? goals : []).filter(g => teamMemberIds.includes(g.owner_id));
-            const avgProgress = teamGoals.length > 0
-              ? Math.round(teamGoals.reduce((acc, g) => acc + (g.completion_pct || 0), 0) / teamGoals.length)
-              : 0;
+            const count = memberCount(team);
+            const teamMembers = membersOf(team);
+            const managerName = team.manager?.name || users.find(u => u.id === team.manager_id)?.name || "Unassigned";
 
             return (
               <div key={team.id}
-                onClick={() => navigate(`/goals?team_id=${team.id}`)}
+                className="card"
                 style={{
-                  background: COLORS.card, border: `1.5px solid ${COLORS.border}`,
-                  borderRadius: 20, padding: 24, display: "flex", flexDirection: "column", gap: 20,
-                  transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)", boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                  cursor: "pointer",
+                  padding: '24px', display: "flex", flexDirection: "column", gap: '20px',
+                  transition: "all 0.2s"
                 }}
                 onMouseEnter={e => {
-                  e.currentTarget.style.borderColor = COLORS.accent;
+                  e.currentTarget.style.borderColor = 'var(--primary)';
                   e.currentTarget.style.transform = "translateY(-4px)";
-                  e.currentTarget.style.boxShadow = `0 12px 24px -10px ${COLORS.accent}20`;
                 }}
                 onMouseLeave={e => {
-                  e.currentTarget.style.borderColor = COLORS.border;
+                  e.currentTarget.style.borderColor = 'var(--border)';
                   e.currentTarget.style.transform = "translateY(0)";
-                  e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)";
                 }}
               >
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <h3 style={{ fontSize: 16, fontWeight: 800, color: COLORS.text, letterSpacing: "-0.01em" }}>{team.name}</h3>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted }}>LEAD:</span>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.text }}>{team.manager?.name || "Unassigned"}</span>
+                  <div style={{ display: "flex", flexDirection: "column", gap: '4px' }}>
+                    <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text)' }}>{team.name}</h3>
+                    <div style={{ display: "flex", alignItems: "center", gap: '6px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)' }}>LEAD:</span>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text)' }}>{managerName}</span>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {(isAdmin || team.manager_id === currentUser?.id) && (
+                  <div style={{ display: "flex", gap: '4px' }}>
+                    {isAdmin && (
                       <>
                         <button onClick={(e) => { e.stopPropagation(); setEditingTeam(team); setShowModal(true); }}
-                          style={{ background: COLORS.bg, border: "none", padding: 6, borderRadius: 6, cursor: "pointer", color: COLORS.muted }}>
+                          className="btn btn-secondary btn-sm" style={{ padding: '6px' }}>
                           <Edit size={14} />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); handleDelete(team.id); }}
-                          style={{ background: `${COLORS.rose}08`, border: "none", padding: 6, borderRadius: 6, cursor: "pointer", color: COLORS.rose }}>
+                          className="btn btn-secondary btn-sm" style={{ padding: '6px', background: 'rgba(239,68,68,0.1)', color: '#EF4444', border: 'none' }}>
                           <Trash2 size={14} />
                         </button>
                       </>
@@ -211,49 +194,44 @@ export default function Teams() {
                   </div>
                 </div>
 
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted }}>VELOCITY</span>
-                    <span style={{ fontSize: 12, fontWeight: 800, color: COLORS.accent }}>{avgProgress}%</span>
-                  </div>
-                  <div style={{ width: "100%", height: 6, background: COLORS.bg, borderRadius: 10, overflow: "hidden" }}>
-                    <div style={{ width: `${avgProgress}%`, height: "100%", background: COLORS.accent, borderRadius: 10 }} />
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 8, borderTop: `1px solid ${COLORS.border}` }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
                   <div style={{ display: "flex", alignItems: "center" }}>
                     {teamMembers.slice(0, 3).map((m, i) => (
-                      <div key={i} style={{
-                        width: 24, height: 24, borderRadius: "50%",
-                        background: COLORS.bg, border: `2px solid ${COLORS.card}`,
+                      <div key={m.id} style={{
+                        width: '24px', height: '24px', borderRadius: "50%",
+                        background: 'var(--bg)', border: '2px solid var(--card-bg)',
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 9, fontWeight: 800, color: COLORS.muted,
-                        marginLeft: i === 0 ? 0 : -8,
+                        fontSize: '9px', fontWeight: 700, color: 'var(--text-muted)',
+                        marginLeft: i === 0 ? 0 : '-8px',
                         zIndex: 3 - i,
                       }}>{m.name?.charAt(0)}</div>
                     ))}
-                    {teamMembers.length > 3 && (
+                    {count > 3 && (
                       <div style={{
-                        width: 24, height: 24, borderRadius: "50%",
-                        background: COLORS.bg, border: `2px solid ${COLORS.card}`,
+                        width: '24px', height: '24px', borderRadius: "50%",
+                        background: 'var(--bg)', border: '2px solid var(--card-bg)',
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 9, fontWeight: 800, color: COLORS.muted,
-                        marginLeft: -8, zIndex: 0,
-                      }}>+{teamMembers.length - 3}</div>
+                        fontSize: '9px', fontWeight: 700, color: 'var(--text-muted)',
+                        marginLeft: '-8px', zIndex: 0,
+                      }}>+{count - 3}</div>
                     )}
-                    <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.muted, marginLeft: 8 }}>{teamMembers.length} Members</span>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginLeft: '8px' }}>{count} Members</span>
                   </div>
-                  <ChevronRight size={14} color={COLORS.subtle} />
+                  <ChevronRight size={14} color="var(--text-muted)" />
                 </div>
               </div>
             );
           })}
         </div>
 
-        {teams.length === 0 && (
-          <div style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 20, padding: 64, textAlign: "center", color: COLORS.subtle }}>
+        {!loading && teams.length === 0 && (
+          <div style={{ border: '2px dashed var(--border)', borderRadius: '12px', padding: '64px', textAlign: "center", color: 'var(--text-muted)' }}>
             No squads formed yet.
+          </div>
+        )}
+        {loading && (
+          <div style={{ padding: '64px', textAlign: "center", color: 'var(--text-muted)' }}>
+            Loading squads…
           </div>
         )}
 
@@ -261,8 +239,9 @@ export default function Teams() {
           <TeamModal
             team={editingTeam}
             users={users}
-            onClose={() => setShowModal(false)}
-            onSuccess={() => { loadData(); setShowModal(false); }}
+            takenManagerIds={new Set(teams.filter(t => t.manager_id && t.id !== editingTeam?.id).map(t => t.manager_id))}
+            onClose={() => { setShowModal(false); setEditingTeam(null); }}
+            onSuccess={() => { setShowModal(false); setEditingTeam(null); fetchData(); }}
           />
         )}
       </div>
@@ -270,28 +249,38 @@ export default function Teams() {
   );
 }
 
-function TeamModal({ team, users, onClose, onSuccess }) {
+function TeamModal({ team, users, takenManagerIds, onClose, onSuccess }) {
   const [formData, setFormData] = useState({
     name: team?.name || '',
-    manager_id: team?.manager_id || ''
+    manager_id: team?.manager_id || '',
   });
+  const [submitting, setSubmitting] = useState(false);
+
+  // Only managers who don't already lead a team are eligible (one team per manager).
+  // The team being edited keeps its current lead as an option.
+  const eligibleLeads = (Array.isArray(users) ? users : []).filter(u =>
+    (u.role === 'manager' || u.role === 'admin') &&
+    (!takenManagerIds?.has(u.id) || u.id === team?.manager_id)
+  );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setSubmitting(true);
+    const payload = { name: formData.name, manager_id: formData.manager_id ? Number(formData.manager_id) : null };
     try {
-      const data = { ...formData };
-      if (!data.manager_id) data.manager_id = null;
-
       if (team) {
-        await teamService.update(team.id, data);
-        toast.success('Squad configuration updated');
+        await teamService.update(team.id, payload);
+        toast.success('Squad updated');
       } else {
-        await teamService.create(data);
-        toast.success('New squad commissioned');
+        await teamService.create(payload);
+        toast.success('Squad commissioned');
       }
       onSuccess();
-    } catch (error) {
-      toast.error('Operation failed');
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : (team ? 'Failed to update squad' : 'Failed to create squad'));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -307,8 +296,8 @@ function TeamModal({ team, users, onClose, onSuccess }) {
         boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
       }}>
         <div>
-          <h3 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text }}>{team ? "Reconfigure Squad" : "Commission New Squad"}</h3>
-          <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 4 }}>Define administrative grouping and leadership</p>
+          <h3 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text }}>{team ? 'Reconfigure Squad' : 'Commission New Squad'}</h3>
+          <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 4 }}>Define administrative grouping and leadership · one lead per team</p>
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -324,7 +313,7 @@ function TeamModal({ team, users, onClose, onSuccess }) {
             <select value={formData.manager_id} onChange={(e) => setFormData({ ...formData, manager_id: e.target.value })}
               style={{ padding: "10px 14px", border: `1.5px solid ${COLORS.border}`, borderRadius: 10, fontSize: 13, outline: "none", background: "#fff" }}>
               <option value="">No Lead assigned</option>
-              {(Array.isArray(users) ? users : []).filter(u => u.role === 'manager' || u.role === 'admin').map((user) => (
+              {eligibleLeads.map((user) => (
                 <option key={user.id} value={user.id}>{user.name}</option>
               ))}
             </select>
@@ -335,9 +324,9 @@ function TeamModal({ team, users, onClose, onSuccess }) {
               style={{ flex: 1, padding: "12px", borderRadius: 11, border: `1.5px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, fontWeight: 700, cursor: "pointer" }}>
               Dismiss
             </button>
-            <button type="submit"
-              style={{ flex: 2, padding: "12px", borderRadius: 11, border: "none", background: COLORS.accent, color: "#fff", fontWeight: 700, cursor: "pointer" }}>
-              Confirm Squad
+            <button type="submit" disabled={submitting}
+              style={{ flex: 2, padding: "12px", borderRadius: 11, border: "none", background: COLORS.accent, color: "#fff", fontWeight: 700, cursor: submitting ? "not-allowed" : "pointer", opacity: submitting ? 0.7 : 1 }}>
+              {submitting ? 'Saving…' : 'Confirm Squad'}
             </button>
           </div>
         </form>

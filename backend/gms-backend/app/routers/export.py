@@ -36,3 +36,26 @@ def export_review(
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/cycles/{cycle_id}/managers/{manager_id}/upward-export")
+def export_upward_feedback(
+    cycle_id: int,
+    manager_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Admin-only: export all upward feedback about a manager for a cycle as one HTML file."""
+    try:
+        html, filename = export_service.render_upward(db, cycle_id, manager_id, current_user.id)
+        return Response(
+            content=html,
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))

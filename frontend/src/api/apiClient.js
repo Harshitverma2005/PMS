@@ -1,11 +1,11 @@
 import axios from 'axios';
 
+// Real API client. Requests are proxied by Vite: /api/v1/* -> http://127.0.0.1:8003/api/v1/*
 const api = axios.create({
   baseURL: '/api/v1',
   headers: {
     'Content-Type': 'application/json'
-  },
-  withCredentials: false
+  }
 });
 
 api.interceptors.request.use((config) => {
@@ -14,9 +14,7 @@ api.interceptors.request.use((config) => {
     config.headers['Authorization'] = `Bearer ${token}`;
   }
   return config;
-}, (error) => {
-  return Promise.reject(error);
-});
+}, (error) => Promise.reject(error));
 
 api.interceptors.response.use(
   (response) => response,
@@ -24,7 +22,9 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

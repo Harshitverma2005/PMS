@@ -11,6 +11,9 @@ class AchievementCreate(BaseModel):
     category: AchievementCategory
     evidence_url: Optional[str] = None
     goal_id: Optional[int] = None
+    # Optional target — a manager/admin may log an achievement for a direct report.
+    # Ignored for members (always logged for themselves).
+    employee_id: Optional[int] = None
 
     @field_validator("title")
     @classmethod

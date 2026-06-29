@@ -1,198 +1,94 @@
 @import "tailwindcss";
 
 @theme {
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
+  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
+  /* Tailwind color tokens (used by shadcn-style classes: text-primary, bg-secondary, etc.) */
+  --color-primary: #2563EB;
+  --color-primary-foreground: #FFFFFF;
+  --color-secondary: #F3F4F6;
+  --color-foreground: #111827;
+  --color-muted-foreground: #6B7280;
+  --color-border: #E5E7EB;
+}
 
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
-
-  --animate-accordion-down: accordion-down 0.2s ease-out;
-  --animate-accordion-up: accordion-up 0.2s ease-out;
-
-  @keyframes accordion-down {
-    from {
-      height: 0;
-    }
-    to {
-      height: var(--radix-accordion-content-height);
-    }
-  }
-  @keyframes accordion-up {
-    from {
-      height: var(--radix-accordion-content-height);
-    }
-    to {
-      height: 0;
-    }
-  }
+/* CSS custom properties consumed by inline styles across the legacy pages.
+   Without these, var(--primary) etc. resolve to invalid and elements lose color. */
+:root {
+  --primary: #2563EB;
+  --primary-light: #EFF3FF;
+  --primary-dark: #1D4ED8;
+  --bg: #F5F4F0;
+  --surface: #FFFFFF;
+  --card-bg: #FFFFFF;
+  --text: #111827;
+  --text-muted: #6B7280;
+  --border: #E5E7EB;
 }
 
 @layer base {
-  :root {
-    --background: 240 10% 96%; /* #F5F4F0 approx */
-    --foreground: 0 0% 7%;      /* #111111 */
-
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 7%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 7%;
-
-    --primary: 221 83% 53%;     /* #2563EB - accent */
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 240 5% 96%;
-    --secondary-foreground: 0 0% 7%;
-
-    --muted: 215 16% 47%;      /* #6B7280 */
-    --muted-foreground: 215 16% 47%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 0 0% 7%;
-
-    --destructive: 0 72% 51%;   /* #DC2626 - rose */
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 45 10% 88%;       /* #E4E2DC approx */
-    --input: 45 10% 88%;
-    --ring: 221 83% 53%;
-
-    --radius: 0.75rem;
-    
-    /* Extra functional colors from snippet */
-    --emerald: 161 94% 30%;   /* #059669 */
-    --amber: 38 92% 50%;     /* #D97706 */
-    --violet: 262 83% 58%;    /* #7C3AED */
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-  }
-}
-
-@layer base {
-  * {
-    @apply border-border;
-  }
   body {
-    @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    @apply bg-[#F9FAFB] text-[#111827] antialiased selection:bg-blue-100 selection:text-blue-900;
   }
 }
 
-/* Custom Base Utilities for "Neat & Clean" UI */
-@layer components {
-  .btn {
-    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 disabled:pointer-events-none;
-  }
-  .btn-primary {
-    @apply bg-primary text-primary-foreground shadow-sm hover:translate-y-[-1px] hover:shadow-md active:translate-y-[0px] active:shadow-sm;
-  }
-  .btn-secondary {
-    @apply bg-secondary text-secondary-foreground hover:bg-secondary/80;
-  }
-  .btn-ghost {
-    @apply hover:bg-accent hover:text-accent-foreground;
-  }
-  .btn-danger {
-    @apply bg-destructive text-destructive-foreground hover:bg-destructive/90;
-  }
-  
-  .card {
-    @apply bg-card text-card-foreground rounded-xl border border-border shadow-sm transition-all duration-300 hover:shadow-md h-full p-6;
-  }
-  
-  .input {
-    @apply flex h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
-  }
-
-  .badge {
-     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold border transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2;
-  }
-}
-
-/* Glassmorphism Classes */
-.glass {
-  @apply bg-white/70 backdrop-blur-md border border-white/20;
-}
-
-.glass-dark {
-  @apply bg-black/30 backdrop-blur-md border border-white/10;
-}
-
-/* Modern Nav Pill */
-.nav-pill {
-  @apply flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200;
-}
-.nav-pill-active {
-  @apply bg-primary/10 text-primary border-l-4 border-primary;
-}
-.nav-pill-inactive {
-  @apply text-muted-foreground hover:bg-accent/50 hover:text-foreground;
-}
-
-/* Custom Webkit Scrollbar */
+/* Scrollbar Styling for premium feel */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-muted-foreground/20 rounded-full;
+  background: #E5E7EB;
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-muted-foreground/40;
+  background: #D1D5DB;
 }
+
+/* Animations */
+.fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Hide some legacy styles that might bleed if I missed a component */
+.old-app-wrapper {
+  display: none !important;
+}
+
+/* Legacy Support Classes (Mapping to Tailwind) */
+.page { @apply w-full; }
+.page-header { @apply mb-8; }
+.page-title { @apply text-2xl font-bold text-gray-900; }
+.page-desc { @apply text-gray-500 mt-1; }
+
+.card { @apply bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-6; }
+.card-header { @apply px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50; }
+.card-header-title { @apply font-semibold text-gray-900; }
+.card-body { @apply p-6; }
+
+.btn { @apply px-4 py-2 rounded-xl font-medium transition-colors inline-flex items-center justify-center gap-2 text-sm cursor-pointer border-0; }
+.btn-primary { @apply bg-blue-600 text-white hover:bg-blue-700; }
+.btn-secondary { @apply bg-gray-100 text-gray-700 hover:bg-gray-200; }
+.btn-ghost { @apply bg-transparent text-blue-600 hover:bg-blue-50; }
+.btn-sm { @apply px-3 py-1.5 text-xs; }
+
+.badge { @apply px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1; }
+.badge.green { @apply bg-emerald-100 text-emerald-700; }
+.badge.orange { @apply bg-orange-100 text-orange-700; }
+.badge.red { @apply bg-red-100 text-red-700; }
+.badge.blue { @apply bg-blue-100 text-blue-700; }
+
+/* Progress bars used by Teams / Cycles / Reports / GoalDetail / FeedbackFlags */
+.progress-bar-wrap { @apply w-full h-2 bg-gray-100 rounded-full overflow-hidden; }
+.progress-bar { @apply h-full bg-blue-600 rounded-full; }
+
+/* Text input used by ReviewStudio */
+.input { @apply w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none bg-gray-50; }

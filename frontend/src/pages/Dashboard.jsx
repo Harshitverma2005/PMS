@@ -1,1090 +1,472 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState } from 'react';
+import { Target, Activity, Award, AlertTriangle, Users, FileText, CheckCircle, Building2, Bell, Gauge } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import Layout from '../components/Layout';
-import { goalService, userService, teamService, cycleService, notificationService, feedbackService, probationService, adminService, dashboardService } from '../api';
-import { useAuthStore } from "../store/auth";
-import toast from "react-hot-toast";
-import { readinessService } from '../api';
-import { 
-  AlertTriangle, ArrowDown, ArrowUp, ArrowRight, CheckCircle, Flag, MessageSquare, Target, TrendingUp, 
-  Activity, Zap, BarChart3, Clock, Eye, Edit3, Send, Plus, Percent,
-  Bell, Star, FileText, ShieldAlert, ChevronRight, ExternalLink,
-  ClipboardCheck, UserCheck, XCircle, RefreshCw, Award
-} from 'lucide-react';
+import { useAuthStore } from '../store/auth';
+import { dashboardService, userService, goalService, probationService } from '../api';
+import { getReadiness, getTeamReadiness } from '../api/readiness';
 
-const COLORS = {
-  bg: "#F5F4F0",
-  surface: "#FFFFFF",
-  card: "#FFFFFF",
-  border: "#E4E2DC",
-  accent: "#2563EB",
-  accentDim: "#1D4ED8",
-  emerald: "#059669",
-  amber: "#D97706",
-  rose: "#DC2626",
-  violet: "#7C3AED",
-  text: "#111111",
-  muted: "#6B7280",
-  subtle: "#9CA3AF",
-  cyan: "#0891B2",
-  indigo: "#4F46E5",
-};
+const READY_THRESHOLD = 60;
 
-/* ──────────────────────────── Shared Components ──────────────────────────── */
+function unwrapList(res) {
+  const d = res?.data;
+  if (Array.isArray(d)) return d;
+  if (Array.isArray(d?.data)) return d.data;
+  if (Array.isArray(d?.items)) return d.items;
+  return [];
+}
 
-const StatCard = ({ label, value, icon: Icon, trend, trendValue, color, to, subtitle }) => {
-  const [isHovered, setIsHovered] = useState(false);
-  const navigate = useNavigate();
-  
+function StatCard({ label, value, icon: Icon, trend, colorClass }) {
   return (
-    <div 
-      onClick={() => to && navigate(to)} 
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      style={{
-        background: COLORS.card, 
-        border: `1.5px solid ${isHovered && to ? color : COLORS.border}`,
-        borderRadius: 16, 
-        padding: "20px 24px",
-        display: "flex", 
-        flexDirection: "column", 
-        gap: 12,
-        boxShadow: isHovered && to ? `0 12px 24px -10px ${color}20` : "0 1px 3px rgba(0,0,0,0.04)",
-        cursor: to ? "pointer" : "default",
-        transform: isHovered && to ? "translateY(-4px)" : "translateY(0)",
-        transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</span>
-        <div style={{
-          width: 36, height: 36, borderRadius: 10,
-          background: `${color}10`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <Icon size={18} color={color} />
+    <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</p>
+          <h3 className="text-3xl font-bold text-gray-900 mt-2">{value}</h3>
+          {trend && <p className="text-sm font-medium text-gray-500 mt-2">{trend}</p>}
         </div>
-      </div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-        <span style={{ fontSize: 26, fontWeight: 800, color: COLORS.text }}>{value}</span>
-        {trend && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: 4,
-            fontSize: 12, fontWeight: 700,
-            color: trend === 'up' ? COLORS.emerald : COLORS.rose,
-          }}>
-            {trend === 'up' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-            {trendValue}
-          </div>
-        )}
-      </div>
-      {subtitle && (
-        <span style={{ fontSize: 11, fontWeight: 500, color: COLORS.subtle }}>{subtitle}</span>
-      )}
-    </div>
-  );
-};
-
-const ProgressBar = ({ progress, color, height = 6 }) => (
-  <div style={{ width: "100%", height, background: COLORS.bg, borderRadius: 10, overflow: "hidden" }}>
-    <div style={{ width: `${Math.min(100, Math.max(0, progress || 0))}%`, height: "100%", background: color || COLORS.accent, borderRadius: 10, transition: "width 0.8s ease" }} />
-  </div>
-);
-
-const StatusPill = ({ status, size = "sm" }) => {
-  const config = {
-    [GoalStatus.DRAFT]: { bg: `${COLORS.subtle}18`, text: COLORS.muted, label: "Draft" },
-    [GoalStatus.ACTIVE]: { bg: `${COLORS.accent}12`, text: COLORS.accent, label: "Active" },
-    [GoalStatus.COMPLETED]: { bg: `${COLORS.emerald}12`, text: COLORS.emerald, label: "Completed" },
-    [GoalStatus.PENDING_APPROVAL]: { bg: `${COLORS.amber}12`, text: COLORS.amber, label: "Pending Approval" },
-    [GoalStatus.AWAITING_FEEDBACK]: { bg: `${COLORS.violet}12`, text: COLORS.violet, label: "Awaiting Feedback" },
-    [GoalStatus.SCORED]: { bg: `${COLORS.emerald}24`, text: COLORS.emerald, label: "Scored" },
-    [GoalStatus.REJECTED]: { bg: `${COLORS.rose}12`, text: COLORS.rose, label: "Rejected" },
-    "approved": { bg: `${COLORS.emerald}12`, text: COLORS.emerald, label: "Approved" },
-    "pending": { bg: `${COLORS.amber}12`, text: COLORS.amber, label: "Pending" },
-    "rejected": { bg: `${COLORS.rose}12`, text: COLORS.rose, label: "Rejected" },
-    "submitted": { bg: `${COLORS.accent}12`, text: COLORS.accent, label: "Submitted" },
-    "not_submitted": { bg: `${COLORS.subtle}14`, text: COLORS.muted, label: "Not Submitted" },
-  };
-  const c = config[status] || { bg: COLORS.bg, text: COLORS.muted, label: status || "—" };
-  const pad = size === "sm" ? "3px 8px" : "4px 12px";
-  const fs = size === "sm" ? 10 : 11;
-  return (
-    <div style={{
-      display: "inline-flex", padding: pad, borderRadius: 6,
-      background: c.bg, color: c.text,
-      fontSize: fs, fontWeight: 700, letterSpacing: "-0.01em",
-      whiteSpace: "nowrap",
-    }}>
-      {c.label}
-    </div>
-  );
-};
-
-const SectionHeader = ({ icon: Icon, title, subtitle, action, color = COLORS.accent }) => (
-  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-      <div style={{
-        width: 36, height: 36, borderRadius: 10,
-        background: `${color}10`,
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        <Icon size={18} color={color} />
-      </div>
-      <div>
-        <div style={{ fontSize: 15, fontWeight: 800, color: COLORS.text, letterSpacing: "-0.02em" }}>{title}</div>
-        {subtitle && <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 1 }}>{subtitle}</div>}
+        <div className={`p-3 rounded-xl ${colorClass}`}>
+          <Icon size={24} />
+        </div>
       </div>
     </div>
-    {action}
-  </div>
-);
-
-const LevelPill = ({ level }) => {
-  const config = {
-    company: { bg: `${COLORS.accent}12`, text: COLORS.accent, label: "Company" },
-    team: { bg: `${COLORS.violet}12`, text: COLORS.violet, label: "Team" },
-    individual: { bg: `${COLORS.cyan}12`, text: COLORS.cyan, label: "Individual" },
-  };
-  const c = config[level] || { bg: COLORS.bg, text: COLORS.muted, label: level || "—" };
-  return (
-    <div style={{
-      display: "inline-flex", padding: "3px 8px", borderRadius: 6,
-      background: c.bg, color: c.text,
-      fontSize: 10, fontWeight: 700,
-    }}>
-      {c.label}
-    </div>
-  );
-};
-
-/* ──────────────────────────── Notification Item ──────────────────────────── */
-
-const NotificationItem = ({ notification, onClick }) => {
-  const iconMap = {
-    goal_approved: { icon: CheckCircle, color: COLORS.emerald },
-    goal_rejected: { icon: XCircle, color: COLORS.rose },
-    review_due: { icon: Clock, color: COLORS.amber },
-    feedback_pending: { icon: MessageSquare, color: COLORS.violet },
-    goal_submitted: { icon: Send, color: COLORS.accent },
-    probation_started: { icon: ShieldAlert, color: COLORS.rose },
-  };
-  
-  const typeConfig = iconMap[notification.type] || { icon: Bell, color: COLORS.accent };
-  const Icon = typeConfig.icon;
-  const isUnread = !notification.is_read;
-  
-  return (
-    <div 
-      onClick={onClick}
-      style={{
-        display: "flex", alignItems: "flex-start", gap: 12,
-        padding: "12px 16px", borderRadius: 12,
-        background: isUnread ? `${COLORS.accent}04` : "transparent",
-        border: `1px solid ${isUnread ? `${COLORS.accent}20` : COLORS.border}`,
-        cursor: "pointer",
-        transition: "all 0.15s ease",
-      }}
-    >
-      <div style={{
-        width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-        background: `${typeConfig.color}10`,
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        <Icon size={14} color={typeConfig.color} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: isUnread ? 700 : 500, color: COLORS.text, lineHeight: 1.4 }}>{notification.message}</div>
-        <div style={{ fontSize: 10, color: COLORS.subtle, marginTop: 4 }}>
-          {new Date(notification.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-        </div>
-      </div>
-      {isUnread && (
-        <div style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.accent, flexShrink: 0, marginTop: 6 }} />
-      )}
-    </div>
-  );
-};
-
-/* ──────────────────────────── Main Dashboard ──────────────────────────── */
-
-export default function Dashboard() {
-  const navigate = useNavigate();
-  const [goals, setGoals] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [notifications, setNotifications] = useState([]);
-  const [performanceForms, setPerformanceForms] = useState([]);
-  const [myProbation, setMyProbation] = useState(null);
-  const [adminData, setAdminData] = useState(null);
-  const [teamData, setTeamData] = useState(null);
-  const [readiness, setReadiness] = useState(null);
-  
-  const currentUser = useAuthStore((state) => state.user);
-
-  const loadData = useCallback(async () => {
-    if (!currentUser) return;
-    
-    setLoading(true);
-    try {
-      if (currentUser?.role === 'admin') {
-        const [adminRes, notificationsRes] = await Promise.all([
-          adminService.getDashboard().catch(() => ({ data: {} })),
-          notificationService.getAll().catch(() => ({ data: [] }))
-        ]);
-        setAdminData(adminRes.data);
-        setNotifications(notificationsRes.data || []);
-      } else if (currentUser?.role === 'manager') {
-        const [teamRes, notificationsRes, goalsRes] = await Promise.all([
-          dashboardService.getTeam().catch(() => ({ data: {} })),
-          notificationService.getAll().catch(() => ({ data: [] })),
-          goalService.getAll().catch(() => ({ data: [] }))
-        ]);
-        setTeamData(teamRes.data);
-        setNotifications(notificationsRes.data || []);
-        setGoals(goalsRes.data || []);
-      } else {
-        const [goalsRes, notificationsRes, performanceRes, probationRes, readinessRes] = await Promise.all([
-          goalService.getAll().catch(() => ({ data: [] })),
-          notificationService.getAll().catch(() => ({ data: [] })),
-          feedbackService.getAll().catch(() => ({ data: [] })),
-          probationService.getMe(currentUser.id).then(r => r.data).catch(() => null),
-          readinessService.getReadiness(currentUser.id).catch(() => ({ data: null }))
-        ]);
-        setGoals(Array.isArray(goalsRes.data) ? goalsRes.data : []);
-        setNotifications(notificationsRes.data || []);
-        setPerformanceForms(performanceRes.data || []);
-        setMyProbation(probationRes || null);
-        setReadiness(readinessRes.data || null);
-      }
-    } catch (error) {
-      console.error("Dashboard Load Error:", error);
-      toast.error('Failed to load dashboard data');
-    } finally {
-      setLoading(false);
-    }
-  }, [currentUser]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  /* ─── Derived Stats ─── */
-  const stats = useMemo(() => {
-    const safeGoals = Array.isArray(goals) ? goals : [];
-    const activeGoals = safeGoals.filter(g => g.status === GoalStatus.ACTIVE || g.status === GoalStatus.AWAITING_FEEDBACK);
-    const completedCount = safeGoals.filter(g => g.status === GoalStatus.COMPLETED || g.completion_pct === 100).length;
-    const avgComp = safeGoals.length > 0 
-      ? Math.round(safeGoals.reduce((acc, g) => acc + (g.completion_pct || 0), 0) / safeGoals.length) 
-      : 0;
-    const pendingApprovals = safeGoals.filter(g => g.status === GoalStatus.PENDING_APPROVAL).length;
-    
-    const safeForms = Array.isArray(performanceForms) ? performanceForms : [];
-    const pendingReviews = safeForms.filter(f => f.status === 'pending' || !f.submitted_at).length;
-    const submittedReviews = safeForms.filter(f => f.status === 'submitted' || f.submitted_at).length;
-    const lastForm = safeForms.length > 0 ? safeForms[safeForms.length - 1] : null;
-
-    return {
-      total: safeGoals.length,
-      activeGoals: activeGoals.length,
-      completed: completedCount,
-      remaining: safeGoals.length - completedCount,
-      atRisk: safeGoals.filter(g => g.is_at_risk).length,
-      avgCompletion: avgComp,
-      pendingApprovals,
-      pendingReviews,
-      submittedReviews,
-      totalReviews: safeForms.length,
-      lastReviewRating: lastForm?.overall_rating || lastForm?.rating || null,
-      hasProbation: !!myProbation,
-      probationStatus: myProbation?.status || null,
-    };
-  }, [goals, performanceForms, myProbation]);
-
-  /* ─── Notification categorization ─── */
-  const categorizedNotifications = useMemo(() => {
-    const safeNotifs = Array.isArray(notifications) ? notifications : [];
-    return {
-      all: safeNotifs.slice(0, 6),
-      unread: safeNotifs.filter(n => !n.is_read).length,
-    };
-  }, [notifications]);
-
-  /* ─── Loading State ─── */
-  if (loading || !currentUser) return (
-    <Layout>
-      <div style={{ height: "60vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
-        <div style={{ width: 40, height: 40, borderRadius: "50%", border: `3px solid ${COLORS.border}`, borderTopColor: COLORS.accent, animation: "spin 1s linear infinite" }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.muted }}>Loading your dashboard…</span>
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </Layout>
-  );
-
-  /* ═══════════════════════════ ADMIN DASHBOARD ═══════════════════════════ */
-  if (currentUser.role === 'admin') {
-    return (
-      <Layout>
-        <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <h1 style={{ fontSize: 26, fontWeight: 900, color: COLORS.text, letterSpacing: "-0.04em" }}>Strategic Command Center</h1>
-              <p style={{ fontSize: 14, color: COLORS.muted, marginTop: 4 }}>Organizational health & execution telemetry</p>
-            </div>
-            <div style={{ display: "flex", gap: 12 }}>
-              <div style={{ background: `${COLORS.accent}10`, color: COLORS.accent, padding: "8px 16px", borderRadius: 10, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
-                <Activity size={16} /> System Online
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 24 }}>
-            <StatCard label="Org Performance" value={`${adminData?.total_goals ? Math.round((adminData.completed_goals / adminData.total_goals) * 100) : 0}%`} icon={TrendingUp} color={COLORS.accent} trend="up" trendValue="Global Avg" />
-            <StatCard label="Open Review Cycles" value={adminData?.open_review_cycles || 0} icon={MessageSquare} color={COLORS.amber} trendValue="Cycles" to="/cycles" />
-            <StatCard label="Open Flags" value={adminData?.pending_escalations || 0} icon={Flag} color={COLORS.rose} trendValue="Requires Review" to="/feedback-flags" />
-            <StatCard label="Probation Active" value={adminData?.probation_in_progress || 0} icon={AlertTriangle} color={COLORS.violet} trendValue="In Progress" to="/probation" />
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 24 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-              <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 24, padding: 28 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <Clock size={20} color={COLORS.accent} />
-                    <span style={{ fontSize: 15, fontWeight: 800, color: COLORS.text, textTransform: "uppercase", letterSpacing: "0.03em" }}>Active Cycle Monitor</span>
-                  </div>
-                  <StatusPill status={adminData?.active_cycle?.name || "No Active Cycle"} />
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-                  <div style={{ padding: "20px", background: COLORS.bg, borderRadius: 18 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>{adminData?.active_cycle?.name || 'Annual Strategy Loop'}</span>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: COLORS.accent }}>{adminData?.feedback?.completion_rate || 0}% Complete</span>
-                    </div>
-                    <ProgressBar progress={adminData?.feedback?.completion_rate || 0} color={COLORS.accent} />
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                    <div style={{ padding: "16px", border: `1px solid ${COLORS.border}`, borderRadius: 16 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, marginBottom: 8 }}>PROBATION TRACK</div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.text }}>{adminData?.probation_in_progress || 0} <span style={{ fontSize: 12, color: COLORS.muted, fontWeight: 500 }}>Active</span></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 24, padding: 28 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-                  <BarChart3 size={20} color={COLORS.emerald} />
-                  <span style={{ fontSize: 15, fontWeight: 800, color: COLORS.text, textTransform: "uppercase", letterSpacing: "0.03em" }}>Goal Distribution</span>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
-                  <div style={{ padding: "20px", background: `${COLORS.accent}08`, borderRadius: 18, border: `1px solid ${COLORS.accent}15` }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.accent, marginBottom: 8 }}>TOTAL</div>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: COLORS.text }}>{adminData?.total_goals || 0}</div>
-                  </div>
-                  <div style={{ padding: "20px", background: `${COLORS.violet}08`, borderRadius: 18, border: `1px solid ${COLORS.violet}15` }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.violet, marginBottom: 8 }}>ACTIVE</div>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: COLORS.text }}>{adminData?.active_goals || 0}</div>
-                  </div>
-                  <div style={{ padding: "20px", background: `${COLORS.emerald}08`, borderRadius: 18, border: `1px solid ${COLORS.emerald}15` }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.emerald, marginBottom: 8 }}>COMPLETED</div>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: COLORS.text }}>{adminData?.completed_goals || 0}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-              <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 24, padding: 28 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-                  <Zap size={20} color={COLORS.rose} />
-                  <span style={{ fontSize: 15, fontWeight: 800, color: COLORS.text, textTransform: "uppercase", letterSpacing: "0.03em" }}>Escalation Queue</span>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ padding: "14px 18px", background: `${COLORS.rose}08`, borderRadius: 16, border: `1px solid ${COLORS.rose}15`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.rose }}>Pending Escalations ({adminData?.pending_escalations || 0})</div>
-                    <AlertTriangle size={16} color={COLORS.rose} />
-                  </div>
-                  <div style={{ padding: "14px 18px", background: `${COLORS.amber}08`, borderRadius: 16, border: `1px solid ${COLORS.amber}15`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.amber }}>At Risk Goals ({adminData?.at_risk_goals || 0})</div>
-                    <Clock size={16} color={COLORS.amber} />
-                  </div>
-                </div>
-              </div>
-              <div style={{ background: `linear-gradient(135deg, ${COLORS.accent} 0%, ${COLORS.accentDim} 100%)`, borderRadius: 24, padding: 28, color: "white" }}>
-                 <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Report Center</h3>
-                 <button onClick={() => navigate('/reports')} style={{ width: "100%", background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, padding: "12px", color: "white", fontWeight: 700, cursor: "pointer" }}>
-                    GO TO REPORTS
-                 </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Layout>
-    );
-  }
-
-  /* ═══════════════════════════ MANAGER DASHBOARD ═══════════════════════════ */
-  if (currentUser.role === 'manager' && teamData) {
-    return (
-      <Layout>
-        <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-          {/* Header */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <h1 style={{ fontSize: 26, fontWeight: 900, color: COLORS.text, letterSpacing: "-0.04em" }}>Team Command Center</h1>
-              <p style={{ fontSize: 14, color: COLORS.muted, marginTop: 4 }}>Managing <span style={{ fontWeight: 700, color: COLORS.text }}>{teamData.team_name}</span> Performance & Approvals</p>
-            </div>
-            <div style={{ display: "flex", gap: 12 }}>
-               <button onClick={() => navigate('/goals/new')} style={{ background: COLORS.accent, color: "#fff", border: "none", borderRadius: 12, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: `0 4px 14px ${COLORS.accent}25` }}>
-                  <Plus size={16} /> New Team Objective
-               </button>
-            </div>
-          </div>
-
-          {/* Summary Cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 20 }}>
-            <StatCard label="Team Progress" value={`${teamData.team_completion_pct}%`} icon={TrendingUp} color={COLORS.emerald} trend="up" trendValue="Avg Completion" />
-            <StatCard label="Pending Approvals" value={teamData.pending_approvals_count} icon={Clock} color={COLORS.amber} subtitle="Goal submissions" />
-            <StatCard label="Pending Reviews" value={teamData.pending_reviews?.length || 0} icon={ClipboardCheck} color={COLORS.violet} subtitle="Forms to complete" />
-            <StatCard label="Flagged" value={teamData.flagged_members?.length || 0} icon={Flag} color={COLORS.rose} subtitle="Requires attention" />
-            <StatCard label="In Probation" value={teamData.probation_members?.length || 0} icon={ShieldAlert} color={COLORS.rose} subtitle="Team PIPs" />
-          </div>
-
-          {/* Main Content */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 24 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-              
-              {/* Team Performance Table */}
-              <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 24, padding: 28 }}>
-                <SectionHeader icon={UserCheck} title="Team Performance" subtitle="Activity & completion per member" color={COLORS.accent} />
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-                    <thead>
-                      <tr>
-                        {["Member", "Goals", "Completion", "Status", ""].map((h, i) => (
-                          <th key={i} style={{ textAlign: "left", padding: "12px", fontSize: 10, fontWeight: 700, color: COLORS.subtle, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: `1px solid ${COLORS.border}` }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {teamData.members?.map((member, idx) => (
-                        <tr key={member.user_id} style={{ borderBottom: idx === teamData.members.length - 1 ? "none" : `1px solid ${COLORS.border}` }}>
-                          <td style={{ padding: "16px 12px" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              <div style={{ width: 32, height: 32, borderRadius: 10, background: COLORS.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: COLORS.muted }}>{member.name.charAt(0)}</div>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>{member.name}</div>
-                            </div>
-                          </td>
-                          <td style={{ padding: "16px 12px" }}>
-                            <div style={{ fontSize: 13, fontWeight: 600 }}>{member.total_goals} goals</div>
-                            <div style={{ fontSize: 10, color: COLORS.subtle }}>{member.active} active</div>
-                          </td>
-                          <td style={{ padding: "16px 12px", width: 140 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                              <ProgressBar progress={member.avg_completion_pct} color={COLORS.emerald} height={5} />
-                              <span style={{ fontSize: 11, fontWeight: 700 }}>{member.avg_completion_pct}%</span>
-                            </div>
-                          </td>
-                          <td style={{ padding: "16px 12px" }}>
-                            {member.at_risk > 0 ? (
-                              <div style={{ display: "flex", alignItems: "center", gap: 4, color: COLORS.rose, fontSize: 11, fontWeight: 700 }}>
-                                <AlertTriangle size={12} /> At Risk
-                              </div>
-                            ) : (
-                              <div style={{ display: "flex", alignItems: "center", gap: 4, color: COLORS.emerald, fontSize: 11, fontWeight: 700 }}>
-                                <CheckCircle size={12} /> On Track
-                              </div>
-                            )}
-                          </td>
-                          <td style={{ padding: "16px 12px", textAlign: "right" }}>
-                            <button onClick={() => navigate(`/users/${member.user_id}`)} style={{ background: "none", border: "none", padding: 4, cursor: "pointer", color: COLORS.subtle }}>
-                               <ExternalLink size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Approval Queue */}
-              <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 24, padding: 28 }}>
-                 <SectionHeader icon={Clock} title="Approval Queue" subtitle="Strategies awaiting your sign-off" color={COLORS.amber} />
-                 {!teamData.pending_approvals || teamData.pending_approvals.length === 0 ? (
-                    <div style={{ textAlign: "center", padding: "40px", color: COLORS.subtle, background: COLORS.bg, borderRadius: 16, border: `1px dashed ${COLORS.border}` }}>
-                       <CheckCircle size={32} style={{ marginBottom: 12, opacity: 0.5 }} />
-                       <div style={{ fontSize: 13, fontWeight: 600 }}>All goal submissions reviewed</div>
-                    </div>
-                 ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                       {(teamData.pending_approvals || []).map(goal => (
-                          <div key={goal.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px", background: COLORS.bg, borderRadius: 16, border: `1px solid ${COLORS.border}` }}>
-                             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                                <div style={{ width: 40, height: 40, borderRadius: 12, background: `${COLORS.amber}10`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                   <Target size={20} color={COLORS.amber} />
-                                </div>
-                                <div>
-                                   <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{goal.title}</div>
-                                   <div style={{ fontSize: 12, color: COLORS.muted }}>Request by <span style={{ fontWeight: 600 }}>{goal.assignee_name}</span> • {goal.weightage}% weight</div>
-                                </div>
-                             </div>
-                             <div style={{ display: "flex", gap: 8 }}>
-                                <button onClick={() => navigate(`/goals/${goal.id}`)} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Review Detail</button>
-                                <button onClick={async () => {
-                                  try {
-                                    await goalService.approve(goal.id);
-                                    toast.success("Goal approved!");
-                                    loadData();
-                                  } catch (e) { toast.error("Approval failed"); }
-                                }} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: COLORS.emerald, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Approve</button>
-                                <button onClick={async () => {
-                                  const reason = prompt("Enter rejection rationale (optional):");
-                                  if (reason === null) return; // User cancelled
-                                  try {
-                                    await goalService.reject(goal.id, reason);
-                                    toast.success("Goal rejected");
-                                    loadData();
-                                  } catch (e) { toast.error("Rejection failed"); }
-                                }} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: COLORS.rose, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Reject</button>
-                             </div>
-                          </div>
-                       ))}
-                    </div>
-                 )}
-              </div>
-            </div>
-
-            {/* Sidebar Column */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-               {/* Reviews Section */}
-               <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 24, padding: 24 }}>
-                  <SectionHeader icon={ClipboardCheck} title="Reviews Hub" subtitle="Self & Manager assessments" color={COLORS.violet} />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                     {teamData.pending_reviews?.map(review => (
-                        <div key={review.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px", background: COLORS.bg, borderRadius: 10 }}>
-                           <div>
-                              <div style={{ fontSize: 12, fontWeight: 700 }}>{review.employee_name}</div>
-                              <div style={{ fontSize: 10, color: COLORS.subtle }}>{review.type.replace('_', ' ')} • {review.status}</div>
-                           </div>
-                           <button onClick={() => navigate(`/performance/form/${review.id}`)} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
-                              Finish
-                           </button>
-                        </div>
-                     ))}
-                     {(!teamData.pending_reviews?.length) && (
-                        <div style={{ textAlign: "center", padding: "20px", color: COLORS.subtle, fontSize: 12 }}>All review cycles caught up.</div>
-                     )}
-                  </div>
-               </div>
-
-            </div>
-          </div>
-        </div>
-      </Layout>
-    );
-  }
-
-  /* ═══════════════════════════ EMPLOYEE / MEMBER DASHBOARD ═══════════════════════════ */
-  
-  const safeGoals = Array.isArray(goals) ? goals : [];
-
-  return (
-    <Layout>
-      <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
-        
-        {/* ─── Header ─── */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <h1 style={{ fontSize: 24, fontWeight: 900, color: COLORS.text, letterSpacing: "-0.03em", margin: 0 }}>
-              {currentUser.role === 'manager' ? 'Team Performance Hub' : 'My Dashboard'}
-            </h1>
-            <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 4 }}>
-              Welcome back, <span style={{ fontWeight: 700, color: COLORS.text }}>{currentUser.name}</span> — here's your performance snapshot
-            </p>
-          </div>
-          <button
-            onClick={() => navigate('/goals/new')}
-            style={{
-              display: "flex", alignItems: "center", gap: 8,
-              background: COLORS.accent, color: "#fff",
-              border: "none", borderRadius: 12, padding: "10px 20px",
-              fontSize: 13, fontWeight: 700, cursor: "pointer",
-              boxShadow: `0 4px 14px ${COLORS.accent}30`,
-              transition: "all 0.2s ease",
-            }}
-          >
-            <Plus size={16} /> Create Goal
-          </button>
-        </div>
-
-        {/* ─── Summary Cards ─── */}
-        <div style={{ display: "grid", gridTemplateColumns: stats.hasProbation ? "repeat(5, 1fr)" : "repeat(4, 1fr)", gap: 20 }}>
-          <StatCard 
-            label="Active Goals" 
-            value={stats.activeGoals} 
-            icon={Target} 
-            color={COLORS.accent}
-            to="/goals"
-            subtitle={`${stats.total} total goals`}
-          />
-          <StatCard 
-            label="Goals Completion" 
-            value={`${stats.avgCompletion}%`} 
-            icon={TrendingUp} 
-            color={COLORS.emerald}
-            trend={stats.avgCompletion >= 50 ? 'up' : 'down'}
-            trendValue={`${stats.completed}/${stats.total} done`}
-          />
-          {currentUser.role !== 'member' && (
-            <StatCard 
-              label="Pending Reviews" 
-              value={stats.pendingReviews} 
-              icon={ClipboardCheck} 
-              color={COLORS.violet}
-              to="/performance"
-              subtitle={`${stats.submittedReviews} submitted`}
-            />
-          )}
-          <StatCard 
-            label="Pending Approvals" 
-            value={stats.pendingApprovals} 
-            icon={Clock} 
-            color={COLORS.amber}
-            to="/goals"
-            subtitle="Goals awaiting manager review"
-          />
-          {stats.hasProbation && (
-            <StatCard 
-              label="Probation Status" 
-              value={stats.probationStatus === 'active' ? 'Active' : stats.probationStatus || '—'}
-              icon={ShieldAlert} 
-              color={COLORS.rose}
-              to="/probation"
-              subtitle="Performance improvement plan"
-            />
-          )}
-        </div>
-
-        {/* ─── Main Content Grid ─── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 24 }}>
-          
-          {/* ─── Left Column ─── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            
-            {/* ═══ GOALS TABLE ═══ */}
-            <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: 24, overflow: "hidden" }}>
-              <SectionHeader 
-                icon={Target} 
-                title="My Goals" 
-                subtitle={`${safeGoals.length} goals tracked`}
-                color={COLORS.accent}
-                action={
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => navigate('/goals')} style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      background: COLORS.bg, border: `1px solid ${COLORS.border}`,
-                      borderRadius: 8, padding: "6px 14px",
-                      fontSize: 11, fontWeight: 700, color: COLORS.muted, cursor: "pointer",
-                    }}>
-                      View All <ArrowRight size={12} />
-                    </button>
-                  </div>
-                }
-              />
-              
-              {safeGoals.length === 0 ? (
-                <div style={{ padding: "40px 0", textAlign: "center" }}>
-                  <Target size={40} color={COLORS.subtle} style={{ marginBottom: 12 }} />
-                  <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.muted }}>No goals yet</div>
-                  <div style={{ fontSize: 12, color: COLORS.subtle, marginTop: 4 }}>Create your first goal to get started</div>
-                  <button onClick={() => navigate('/goals/new')} style={{
-                    marginTop: 16, background: COLORS.accent, color: "#fff",
-                    border: "none", borderRadius: 8, padding: "8px 20px",
-                    fontSize: 12, fontWeight: 700, cursor: "pointer",
-                  }}>
-                    <Plus size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
-                    Create Goal
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  <div style={{ 
-                    display: "grid", 
-                    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", 
-                    gap: 16 
-                  }}>
-                    {safeGoals.slice(0, 4).map((goal) => (
-                      <div 
-                        key={goal.id}
-                        onClick={() => navigate(`/goals/${goal.id}`)}
-                        style={{
-                          padding: 20, background: COLORS.bg, borderRadius: 16,
-                          border: `1px solid ${COLORS.border}`, cursor: "pointer",
-                          transition: "all 0.2s ease", display: "flex", flexDirection: "column", gap: 12
-                        }}
-                        onMouseEnter={e => {
-                          e.currentTarget.style.borderColor = COLORS.accent + "40";
-                          e.currentTarget.style.transform = "translateY(-2px)";
-                        }}
-                        onMouseLeave={e => {
-                          e.currentTarget.style.borderColor = COLORS.border;
-                          e.currentTarget.style.transform = "translateY(0)";
-                        }}
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.accent, textTransform: "uppercase" }}>{goal.level}</span>
-                            <span style={{ fontSize: 13, fontWeight: 800, color: COLORS.text }}>{goal.title}</span>
-                          </div>
-                          <StatusPill status={goal.status} size="sm" />
-                        </div>
-                        
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, fontWeight: 700, color: COLORS.muted }}>
-                            <span>Completion</span>
-                            <span>{goal.completion_pct || 0}%</span>
-                          </div>
-                          <ProgressBar progress={goal.completion_pct || 0} color={COLORS.accent} height={4} />
-                        </div>
-
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <div style={{ width: 20, height: 20, borderRadius: 6, background: "#fff", border: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, color: COLORS.accent }}>
-                              {goal.owner?.name?.charAt(0) || "U"}
-                            </div>
-                            <span style={{ fontSize: 10, fontWeight: 600, color: COLORS.muted }}>{goal.owner?.name || "Unassigned"}</span>
-                          </div>
-                          <ChevronRight size={14} color={COLORS.subtle} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  
-                  {safeGoals.length > 4 && (
-                    <button 
-                      onClick={() => navigate('/goals')}
-                      style={{
-                        width: "100%", padding: "12px", background: "transparent",
-                        border: `1.5px dashed ${COLORS.border}`, borderRadius: 12,
-                        color: COLORS.accent, fontSize: 12, fontWeight: 700, 
-                        cursor: "pointer", transition: "0.2s"
-                      }}
-                      onMouseEnter={e => e.currentTarget.style.background = `${COLORS.accent}05`}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                    >
-                      Explore All {safeGoals.length} Strategic Objectives <ArrowRight size={12} style={{ marginLeft: 6, verticalAlign: "middle" }} />
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* ═══ READINESS SECTION ═══ */}
-            {readiness && (
-              <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: 24 }}>
-                <SectionHeader 
-                  icon={Activity} 
-                  title="Review Readiness" 
-                  subtitle="Your preparedness for the upcoming performance cycle"
-                  color={readiness.score >= 70 ? COLORS.emerald : readiness.score >= 40 ? COLORS.amber : COLORS.rose}
-                />
-                
-                <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
-                   <div style={{
-                      width: 100, height: 100, borderRadius: "50%",
-                      background: `conic-gradient(${readiness.score >= 70 ? COLORS.emerald : readiness.score >= 40 ? COLORS.amber : COLORS.rose} ${readiness.score}%, ${COLORS.bg} 0)`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      position: "relative"
-                   }}>
-                      <div style={{
-                         position: "absolute", inset: 8, background: COLORS.card, borderRadius: "50%",
-                         display: "flex", alignItems: "center", justifyContent: "center",
-                         flexDirection: "column"
-                      }}>
-                         <span style={{ fontSize: 24, fontWeight: 900, color: COLORS.text }}>{readiness.score}</span>
-                         <span style={{ fontSize: 10, fontWeight: 700, color: COLORS.muted }}>SCORE</span>
-                      </div>
-                   </div>
-                   
-                   <div style={{ flex: 1 }}>
-                      {readiness.score === 100 ? (
-                         <div style={{ display: "flex", alignItems: "center", gap: 10, color: COLORS.emerald, background: `${COLORS.emerald}10`, padding: 16, borderRadius: 12 }}>
-                            <CheckCircle size={24} />
-                            <span style={{ fontSize: 14, fontWeight: 700 }}>You are review-ready — great work!</span>
-                         </div>
-                      ) : (
-                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, marginBottom: 4 }}>RECOMMENDED ACTIONS:</div>
-                            {readiness.prompts.map((prompt, i) => (
-                               <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: COLORS.text, background: COLORS.bg, padding: 10, borderRadius: 8 }}>
-                                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.amber, marginTop: 6, flexShrink: 0 }} />
-                                  <span>{prompt}</span>
-                               </div>
-                            ))}
-                         </div>
-                      )}
-                   </div>
-                </div>
-              </div>
-            )}
-
-            {/* ═══ FEEDBACK / REVIEWS SECTION ═══ */}
-            {currentUser.role !== 'member' && (
-              <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: 24 }}>
-                <SectionHeader 
-                  icon={MessageSquare} 
-                  title="Feedback & Reviews" 
-                  subtitle="Your performance review history"
-                  color={COLORS.violet}
-                  action={
-                    <button onClick={() => navigate('/performance')} style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      background: COLORS.bg, border: `1px solid ${COLORS.border}`,
-                      borderRadius: 8, padding: "6px 14px",
-                      fontSize: 11, fontWeight: 700, color: COLORS.muted, cursor: "pointer",
-                    }}>
-                      My Reviews <ArrowRight size={12} />
-                    </button>
-                  }
-                />
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 20 }}>
-                  {/* Self Feedback Status */}
-                  <div style={{ padding: "16px", background: COLORS.bg, borderRadius: 14, border: `1px solid ${COLORS.border}` }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <FileText size={14} color={COLORS.accent} />
-                      <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Self Feedback</span>
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.text }}>
-                      {stats.submittedReviews > 0 ? 'Submitted' : 'Pending'}
-                    </div>
-                    <div style={{ fontSize: 10, color: COLORS.subtle, marginTop: 4 }}>
-                      {stats.submittedReviews}/{stats.totalReviews} forms completed
-                    </div>
-                  </div>
-
-                  {/* Manager Feedback Status */}
-                  <div style={{ padding: "16px", background: COLORS.bg, borderRadius: 14, border: `1px solid ${COLORS.border}` }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <UserCheck size={14} color={COLORS.emerald} />
-                      <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Manager Review</span>
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.text }}>
-                      {stats.pendingReviews > 0 ? `${stats.pendingReviews} Pending` : 'All Done'}
-                    </div>
-                    <div style={{ fontSize: 10, color: COLORS.subtle, marginTop: 4 }}>
-                      Evaluator assessments
-                    </div>
-                  </div>
-
-                  {/* Last Rating */}
-                  <div style={{ padding: "16px", background: COLORS.bg, borderRadius: 14, border: `1px solid ${COLORS.border}` }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <Star size={14} color={COLORS.amber} />
-                      <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Last Rating</span>
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.text }}>
-                      {stats.lastReviewRating
-                        ? stats.lastReviewRating.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-                        : '—'}
-                    </div>
-                    <div style={{ fontSize: 10, color: COLORS.subtle, marginTop: 4 }}>
-                      Most recent cycle
-                    </div>
-                  </div>
-                </div>
-
-                {/* Review History */}
-                {performanceForms.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>Review History</div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {performanceForms.slice(0, 4).map((form, idx) => (
-                        <div 
-                          key={form.id || idx} 
-                          onClick={() => navigate(`/performance/form/${form.id}`)}
-                          style={{
-                            display: "flex", alignItems: "center", justifyContent: "space-between",
-                            padding: "10px 14px", borderRadius: 10,
-                            border: `1px solid ${COLORS.border}`, cursor: "pointer",
-                            transition: "all 0.15s ease",
-                          }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{ width: 28, height: 28, borderRadius: 7, background: `${COLORS.violet}10`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              <ClipboardCheck size={13} color={COLORS.violet} />
-                            </div>
-                            <div>
-                              <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.text }}>
-                                {form.cycle_name || form.review_cycle?.name || `Review #${form.id}`}
-                              </div>
-                              <div style={{ fontSize: 10, color: COLORS.subtle }}>
-                                {form.submitted_at ? `Submitted ${new Date(form.submitted_at).toLocaleDateString()}` : 'Not submitted'}
-                              </div>
-                            </div>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <StatusPill status={form.submitted_at ? 'submitted' : 'pending'} size="sm" />
-                            <ChevronRight size={14} color={COLORS.subtle} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {performanceForms.length === 0 && (
-                  <div style={{ padding: "20px 0", textAlign: "center" }}>
-                    <MessageSquare size={32} color={COLORS.subtle} style={{ marginBottom: 8 }} />
-                    <div style={{ fontSize: 12, color: COLORS.muted }}>No review forms assigned yet</div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* ─── Right Column ─── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            
-            {/* ═══ PERFORMANCE SNAPSHOT ═══ */}
-            <div style={{ background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: 24 }}>
-              <SectionHeader icon={BarChart3} title="Performance Snapshot" color={COLORS.emerald} />
-              
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {/* Completion Ring */}
-                <div style={{ display: "flex", alignItems: "center", gap: 20, padding: "16px", background: COLORS.bg, borderRadius: 14 }}>
-                  <div style={{ position: "relative", width: 64, height: 64 }}>
-                    <svg width={64} height={64} viewBox="0 0 64 64" style={{ transform: "rotate(-90deg)" }}>
-                      <circle cx={32} cy={32} r={26} fill="none" stroke={COLORS.border} strokeWidth={6} />
-                      <circle cx={32} cy={32} r={26} fill="none" stroke={COLORS.emerald} strokeWidth={6}
-                        strokeDasharray={`${(stats.avgCompletion / 100) * 163.36} 163.36`}
-                        strokeLinecap="round"
-                        style={{ transition: "stroke-dasharray 1s ease" }}
-                      />
-                    </svg>
-                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <span style={{ fontSize: 14, fontWeight: 800, color: COLORS.text }}>{stats.avgCompletion}%</span>
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>Overall Completion</div>
-                    <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>{stats.completed} of {stats.total} goals completed</div>
-                  </div>
-                </div>
-
-                {/* Stat Bars */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {[
-                    { label: "Active", count: stats.activeGoals, total: stats.total, color: COLORS.accent },
-                    { label: "Completed", count: stats.completed, total: stats.total, color: COLORS.emerald },
-                    { label: "At Risk", count: stats.atRisk, total: stats.total, color: COLORS.rose },
-                    { label: "Pending Approval", count: stats.pendingApprovals, total: stats.total, color: COLORS.amber },
-                  ].map(item => (
-                    <div key={item.label}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.muted }}>{item.label}</span>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.text }}>{item.count}</span>
-                      </div>
-                      <ProgressBar progress={item.total > 0 ? (item.count / item.total) * 100 : 0} color={item.color} height={4} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* ═══ PROBATION CARD (if applicable) ═══ */}
-            {myProbation && (
-              <div style={{
-                background: `linear-gradient(135deg, ${COLORS.rose}08, ${COLORS.amber}08)`,
-                border: `1.5px solid ${COLORS.rose}25`,
-                borderRadius: 20, padding: 24,
-              }}>
-                <SectionHeader icon={ShieldAlert} title="Probation Status" color={COLORS.rose} />
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.muted }}>Status</span>
-                    <StatusPill status={myProbation.status || 'active'} />
-                  </div>
-                  {myProbation.reason && (
-                    <div style={{ fontSize: 12, color: COLORS.muted, padding: "10px 12px", background: "rgba(255,255,255,0.6)", borderRadius: 10 }}>
-                      <span style={{ fontWeight: 700 }}>Reason:</span> {myProbation.reason}
-                    </div>
-                  )}
-                  <button onClick={() => navigate('/probation')} style={{
-                    background: COLORS.rose, color: "#fff", border: "none",
-                    borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                  }}>
-                    View Details <ArrowRight size={12} />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            </div>
-          </div>
-        </div>
-      </Layout>
   );
 }
 
-/* ──────────────────────────── Goal Table Row ──────────────────────────── */
+function LoadingState() {
+  return (
+    <div className="flex items-center justify-center h-[60vh]">
+      <div className="text-gray-500">Loading dashboard…</div>
+    </div>
+  );
+}
 
-function GoalRow({ goal, isLast, navigate }) {
-  const [isHovered, setIsHovered] = useState(false);
-  
-  const approvalStatus = goal.status === GoalStatus.DRAFT ? 'not_submitted'
-    : goal.status === GoalStatus.PENDING_APPROVAL ? 'pending'
-    : goal.status === GoalStatus.REJECTED ? 'rejected'
-    : 'approved';
+function ProbationSelfCheckins({ currentUser }) {
+  const [record, setRecord] = useState(undefined); // undefined = loading, null = none
+  const [active, setActive] = useState(null); // trigger being filled
+  const [rating, setRating] = useState(3);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = async () => {
+    try {
+      const res = await probationService.getByEmployee(currentUser.id);
+      setRecord(res?.data ?? null);
+    } catch {
+      setRecord(null); // 404 → not on probation
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [currentUser.id]);
+
+  if (!record) return null; // not on probation (or still loading → render nothing)
+
+  const triggers = (record.triggers || []).filter(t => t.trigger_day > 0);
+  // Pending = fired trigger where this employee hasn't submitted a self assessment yet
+  const pending = triggers.filter(t => !(t.feedbacks || []).some(f => (f.feedback_type || '').toLowerCase() === 'self'));
+
+  const submit = async () => {
+    if (!active?.id) return;
+    if (!comment.trim()) return toast.error('Add a short self-assessment');
+    setSubmitting(true);
+    try {
+      await probationService.submitTriggerFeedback(active.id, {
+        feedback_type: 'self',
+        form_data: { rating: Number(rating), comment: comment.trim() },
+      });
+      toast.success('Self-assessment submitted');
+      setActive(null); setComment(''); setRating(3);
+      await load();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to submit');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
-    <tr
-      onClick={() => navigate(`/goals/${goal.id}`)}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      style={{
-        cursor: "pointer",
-        background: isHovered ? `${COLORS.accent}04` : "transparent",
-        transition: "background 0.15s ease",
-      }}
-    >
-      <td style={{ padding: "12px", borderBottom: isLast ? "none" : `1px solid ${COLORS.border}`, maxWidth: 200 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {goal.title}
+    <div className="bg-white rounded-2xl border border-amber-200 shadow-sm overflow-hidden">
+      <div className="px-6 py-5 border-b border-gray-200 bg-amber-50/50">
+        <h3 className="font-semibold text-gray-900">Probation Check-ins</h3>
+        <p className="text-xs text-gray-500 mt-1">Submit your self-assessment at each milestone. It unlocks alongside your manager's once both are in.</p>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {triggers.length === 0 && (
+          <div className="p-6 text-sm text-gray-500">No check-ins yet — milestones open at 30, 60 and 80 working days.</div>
+        )}
+        {triggers.map(t => {
+          const mine = (t.feedbacks || []).find(f => (f.feedback_type || '').toLowerCase() === 'self');
+          return (
+            <div key={t.id} className="px-6 py-4 flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="font-medium text-gray-900">Day {t.trigger_day} Check-in</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {mine ? `Self-assessment submitted · ${mine.form_data?.rating ?? '—'}/5` : 'Awaiting your self-assessment'}
+                </div>
+              </div>
+              {!mine && (
+                <button onClick={() => setActive(t)} className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap">
+                  Submit
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {active && (
+        <div onClick={() => !submitting && setActive(null)} className="fixed inset-0 bg-black/45 flex items-center justify-center z-50 p-5">
+          <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl p-7 w-full max-w-md shadow-xl">
+            <h3 className="text-lg font-bold text-gray-900">Day {active.trigger_day} Self-Assessment</h3>
+            <p className="text-sm text-gray-500 mt-1 mb-5">How do you feel you're progressing at this milestone?</p>
+            <label className="text-xs font-semibold text-gray-500 uppercase">Self rating</label>
+            <div className="flex gap-2 mt-2 mb-5">
+              {[1, 2, 3, 4, 5].map(n => (
+                <button key={n} type="button" onClick={() => setRating(n)}
+                  className={`flex-1 py-2.5 rounded-lg font-bold ${Number(rating) === n ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                  {n}
+                </button>
+              ))}
+            </div>
+            <label className="text-xs font-semibold text-gray-500 uppercase">Notes</label>
+            <textarea value={comment} onChange={(e) => setComment(e.target.value)}
+              placeholder="Wins, blockers, support you need…"
+              className="w-full mt-2 p-3 border border-gray-200 rounded-xl text-sm min-h-[100px] resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/40" />
+            <div className="flex justify-end gap-3 mt-5">
+              <button onClick={() => setActive(null)} disabled={submitting} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100">Cancel</button>
+              <button onClick={submit} disabled={submitting} className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                {submitting ? 'Submitting…' : 'Submit'}
+              </button>
+            </div>
+          </div>
         </div>
-        {goal.description && (
-          <div style={{ fontSize: 10, color: COLORS.subtle, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
-            {goal.description}
+      )}
+    </div>
+  );
+}
+
+function EmployeeDashboard({ currentUser }) {
+  const navigate = useNavigate();
+  const [data, setData] = useState(null);
+  const [readiness, setReadiness] = useState(null);
+  const [goals, setGoals] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const [meRes, rdRes, goalsRes] = await Promise.all([
+          dashboardService.getMe(),
+          getReadiness(currentUser.id).catch(() => null),
+          goalService.getAll().catch(() => ({ data: [] })),
+        ]);
+        if (active) { setData(meRes.data || {}); setReadiness(rdRes?.data || null); setGoals(unwrapList(goalsRes)); }
+      } catch (err) {
+        toast.error('Failed to load dashboard');
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [currentUser.id]);
+
+  if (loading) return <LoadingState />;
+
+  const d = data || {};
+
+  return (
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Welcome back, {currentUser.name}</h1>
+          <p className="text-gray-500 mt-2">Here is your performance snapshot and active objectives.</p>
+        </div>
+        <button onClick={() => navigate('/goals/new')} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-medium shadow-sm transition-colors flex items-center gap-2">
+          <Target size={18} /> Propose Goal
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <StatCard label="Active Goals" value={d.active_goals ?? 0} icon={Target} colorClass="bg-blue-50 text-blue-600" trend={`${d.total_goals ?? 0} total`} />
+        <StatCard label="Completed" value={d.completed_goals ?? 0} icon={CheckCircle} colorClass="bg-emerald-50 text-emerald-600" trend="This cycle" />
+        <StatCard label="At Risk" value={d.at_risk_goals ?? 0} icon={AlertTriangle} colorClass={(d.at_risk_goals ?? 0) > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'} trend={(d.at_risk_goals ?? 0) > 0 ? 'Needs attention' : 'On track'} />
+        <StatCard label="Avg Completion" value={`${Math.round(d.avg_completion_pct ?? 0)}%`} icon={Activity} colorClass="bg-purple-50 text-purple-600" />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <StatCard label="Review Readiness" value={`${readiness?.score ?? 0}%`} icon={Gauge}
+          colorClass={(readiness?.score ?? 0) >= 80 ? 'bg-emerald-50 text-emerald-600' : (readiness?.score ?? 0) >= READY_THRESHOLD ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}
+          trend={(readiness?.score ?? 0) === 100 ? 'Fully ready' : `${(readiness?.signals || []).filter(s => s.passed).length}/5 signals`} />
+        <StatCard label="Pending Review Forms" value={d.pending_review_forms ?? 0} icon={FileText} colorClass="bg-orange-50 text-orange-600" trend={(d.pending_review_forms ?? 0) > 0 ? 'Action required' : 'All caught up'} />
+        <StatCard label="Probation Status" value={d.probation_status ? String(d.probation_status).replace(/_/g, ' ') : '—'} icon={Award} colorClass="bg-amber-50 text-amber-600" />
+        <StatCard label="Notifications" value={d.unread_notifications ?? 0} icon={Bell} colorClass="bg-blue-50 text-blue-600" trend="Unread" />
+      </div>
+
+      <ProbationSelfCheckins currentUser={currentUser} />
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-200 flex justify-between items-center bg-gray-50/50">
+          <h3 className="font-semibold text-gray-900">Your Goals</h3>
+          <button onClick={() => navigate('/goals')} className="text-sm font-medium text-blue-600 hover:text-blue-700">View All</button>
+        </div>
+        {goals.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">No goals yet. Propose your first objective.</div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {goals.slice(0, 6).map(g => {
+              const pct = g.completion_percentage ?? 0;
+              const label = g.status === 'awaiting_feedback' ? 'Pending Review' : String(g.status || '').replace(/_/g, ' ');
+              return (
+                <div key={g.id} onClick={() => navigate(`/goals/${g.id}`)} className="px-6 py-4 flex items-center gap-4 hover:bg-gray-50 cursor-pointer">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-gray-900 truncate">{g.title}</div>
+                    <div className="text-xs text-gray-500 mt-1 capitalize">{label}</div>
+                  </div>
+                  <div className="flex items-center gap-2 w-36">
+                    <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-600 rounded-full" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-xs font-medium text-gray-600 w-8 text-right">{pct}%</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
-      </td>
-      <td style={{ padding: "12px", borderBottom: isLast ? "none" : `1px solid ${COLORS.border}` }}>
-        <LevelPill level={goal.goal_type || goal.level} />
-      </td>
-      <td style={{ padding: "12px", borderBottom: isLast ? "none" : `1px solid ${COLORS.border}` }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>{goal.weightage || '—'}%</span>
-      </td>
-      <td style={{ padding: "12px", borderBottom: isLast ? "none" : `1px solid ${COLORS.border}`, minWidth: 120 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <ProgressBar progress={goal.completion_pct || 0} color={
-            (goal.completion_pct || 0) >= 75 ? COLORS.emerald 
-            : (goal.completion_pct || 0) >= 40 ? COLORS.amber 
-            : COLORS.rose
-          } />
-          <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.text, minWidth: 28, textAlign: "right" }}>
-            {goal.completion_pct || 0}%
-          </span>
-        </div>
-      </td>
-      <td style={{ padding: "12px", borderBottom: isLast ? "none" : `1px solid ${COLORS.border}` }}>
-        <StatusPill status={goal.status} size="sm" />
-      </td>
-      <td style={{ padding: "12px", borderBottom: isLast ? "none" : `1px solid ${COLORS.border}` }}>
-        <StatusPill status={approvalStatus} size="sm" />
-      </td>
-      <td style={{ padding: "12px", borderBottom: isLast ? "none" : `1px solid ${COLORS.border}` }}>
-        <ChevronRight size={14} color={COLORS.subtle} />
-      </td>
-    </tr>
+      </div>
+    </div>
   );
+}
+
+function ManagerDashboard({ currentUser }) {
+  const navigate = useNavigate();
+  const [members, setMembers] = useState([]);
+  const [belowReady, setBelowReady] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        // Scope to DIRECT REPORTS (manager_id), not the whole team, so a manager
+        // never sees peers or other managers' reports who merely share a team.
+        const [usersRes, goalsRes, rdRes] = await Promise.all([
+          userService.getAll(),
+          goalService.getAll().catch(() => ({ data: [] })),
+          getTeamReadiness().catch(() => ({ data: [] })),
+        ]);
+        if (!active) return;
+        const team = unwrapList(rdRes);
+        setBelowReady(team.filter(r => (r.score ?? 0) < READY_THRESHOLD).length);
+        const users = unwrapList(usersRes);
+        const goals = unwrapList(goalsRes);
+        const reports = users.filter(u => u.manager_id === currentUser.id);
+        const rows = reports.map(u => {
+          const mg = goals.filter(g => g.assignee_id === u.id);
+          const st = (g) => (g.status || '').toLowerCase();
+          const atRisk = mg.filter(g => g.is_at_risk || (st(g) === 'active' && (g.completion_percentage ?? 0) < 50));
+          const avg = mg.length ? Math.round(mg.reduce((s, g) => s + (g.completion_percentage ?? 0), 0) / mg.length) : 0;
+          return {
+            user_id: u.id,
+            name: u.name,
+            total_goals: mg.length,
+            active: mg.filter(g => st(g) === 'active').length,
+            completed: mg.filter(g => st(g) === 'completed').length,
+            at_risk: atRisk.length,
+            avg_completion_pct: avg,
+          };
+        });
+        setMembers(rows);
+      } catch (err) {
+        toast.error('Failed to load team dashboard');
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [currentUser.id]);
+
+  if (loading) return <LoadingState />;
+
+  const totalGoals = members.reduce((s, m) => s + (m.total_goals || 0), 0);
+  const activeGoals = members.reduce((s, m) => s + (m.active || 0), 0);
+  const atRisk = members.reduce((s, m) => s + (m.at_risk || 0), 0);
+
+  return (
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">{currentUser.name}'s Team Command Center</h1>
+          <p className="text-gray-500 mt-2">Oversee your direct reports, approve goals, and manage workload.</p>
+        </div>
+        <button onClick={() => navigate('/goals/new')} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-medium shadow-sm transition-colors flex items-center gap-2">
+          <Target size={18} /> Assign Goal
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
+        <StatCard label="Team Members" value={members.length} icon={Users} colorClass="bg-blue-50 text-blue-600" />
+        <StatCard label="Total Goals" value={totalGoals} icon={FileText} colorClass="bg-purple-50 text-purple-600" />
+        <StatCard label="Active Goals" value={activeGoals} icon={Target} colorClass="bg-emerald-50 text-emerald-600" />
+        <StatCard label="At Risk" value={atRisk} icon={AlertTriangle} colorClass={atRisk > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'} />
+        <StatCard label="Not Review-Ready" value={belowReady} icon={Gauge}
+          colorClass={belowReady > 0 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}
+          trend={belowReady > 0 ? 'Below 60% — nudge them' : 'Team is ready'} />
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-200 flex justify-between items-center bg-gray-50/50">
+          <h3 className="font-semibold text-gray-900">Team Members</h3>
+          <button onClick={() => navigate('/goals')} className="text-sm font-medium text-blue-600 hover:text-blue-700">View Goals →</button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              <tr>
+                <th className="px-6 py-4">Member</th>
+                <th className="px-6 py-4">Total Goals</th>
+                <th className="px-6 py-4">Active</th>
+                <th className="px-6 py-4">Completed</th>
+                <th className="px-6 py-4">At Risk</th>
+                <th className="px-6 py-4">Avg Completion</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {members.length === 0 ? (
+                <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-500">No team members found.</td></tr>
+              ) : members.map(member => (
+                <tr key={member.user_id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-6 py-4 flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs">{member.name?.charAt(0)}</div>
+                    <span className="font-medium text-gray-900">{member.name}</span>
+                  </td>
+                  <td className="px-6 py-4 text-gray-600">{member.total_goals ?? 0}</td>
+                  <td className="px-6 py-4 text-gray-600">{member.active ?? 0}</td>
+                  <td className="px-6 py-4 text-gray-600">{member.completed ?? 0}</td>
+                  <td className="px-6 py-4">
+                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${(member.at_risk ?? 0) > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {member.at_risk ?? 0}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-gray-600">{Math.round(member.avg_completion_pct ?? 0)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminDashboard() {
+  const [data, setData] = useState(null);
+  const [notReady, setNotReady] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const [companyRes, rdRes] = await Promise.all([
+          dashboardService.getCompany(),
+          getTeamReadiness().catch(() => ({ data: [] })),
+        ]);
+        if (active) {
+          setData(companyRes.data || {});
+          setNotReady(unwrapList(rdRes).filter(r => (r.score ?? 0) < READY_THRESHOLD).length);
+        }
+      } catch (err) {
+        toast.error('Failed to load company dashboard');
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  if (loading) return <LoadingState />;
+
+  const d = data || {};
+  const teams = Array.isArray(d.teams) ? d.teams : (d.teams?.items || []);
+
+  return (
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Company Intelligence</h1>
+          <p className="text-gray-500 mt-2">Company-wide analytics and review execution telemetry.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
+        <StatCard label="Total Employees" value={d.total_employees ?? 0} icon={Users} colorClass="bg-blue-50 text-blue-600" />
+        <StatCard label="Total Goals" value={d.total_goals ?? 0} icon={FileText} colorClass="bg-purple-50 text-purple-600" />
+        <StatCard label="Active Goals" value={d.active_goals ?? 0} icon={Target} colorClass="bg-emerald-50 text-emerald-600" />
+        <StatCard label="Completed" value={d.completed_goals ?? 0} icon={CheckCircle} colorClass="bg-emerald-50 text-emerald-600" />
+        <StatCard label="At Risk" value={d.at_risk_goals ?? 0} icon={AlertTriangle} colorClass={(d.at_risk_goals ?? 0) > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'} />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <StatCard label="Probation In Progress" value={d.probation_in_progress ?? 0} icon={Award} colorClass="bg-amber-50 text-amber-600" />
+        <StatCard label="Open Review Cycles" value={d.open_review_cycles ?? 0} icon={Activity} colorClass="bg-blue-50 text-blue-600" />
+        <StatCard label="Pending Escalations" value={d.pending_escalations ?? 0} icon={AlertTriangle} colorClass={(d.pending_escalations ?? 0) > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'} />
+        <StatCard label="Not Review-Ready" value={notReady} icon={Gauge}
+          colorClass={notReady > 0 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}
+          trend={notReady > 0 ? 'Employees below 60%' : 'All employees ready'} />
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-200 bg-gray-50/50 flex items-center gap-2">
+          <Building2 size={18} className="text-gray-500" />
+          <h3 className="font-semibold text-gray-900">Teams</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              <tr>
+                <th className="px-6 py-4">Team</th>
+                <th className="px-6 py-4">Total Goals</th>
+                <th className="px-6 py-4">Completion</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {teams.length === 0 ? (
+                <tr><td colSpan={3} className="px-6 py-8 text-center text-gray-500">No teams found.</td></tr>
+              ) : teams.map(team => (
+                <tr key={team.team_id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-6 py-4 font-medium text-gray-900">{team.team_name}</td>
+                  <td className="px-6 py-4 text-gray-600">{team.total_goals ?? 0}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2 w-40">
+                      <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-600 rounded-full" style={{ width: `${Math.round(team.completion_pct ?? 0)}%` }} />
+                      </div>
+                      <span className="text-xs font-medium text-gray-600 w-10 text-right">{Math.round(team.completion_pct ?? 0)}%</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const currentUser = useAuthStore((s) => s.user);
+
+  const renderDashboard = () => {
+    if (!currentUser) return <LoadingState />;
+    if (currentUser.role === 'member') return <EmployeeDashboard currentUser={currentUser} />;
+    if (currentUser.role === 'manager') return <ManagerDashboard currentUser={currentUser} />;
+    if (currentUser.role === 'admin') return <AdminDashboard />;
+    return null;
+  };
+
+  return <Layout>{renderDashboard()}</Layout>;
 }

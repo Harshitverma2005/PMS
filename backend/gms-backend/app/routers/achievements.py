@@ -22,9 +22,24 @@ def create_achievement(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create a new achievement. employee_id is always set from the token."""
+    """Create an achievement.
+    - Members log only for themselves.
+    - A manager/admin may log for a direct report by passing employee_id; the
+      achievement (and its timeline event) is recorded against that employee.
+    """
+    from app.services.hierarchy_service import is_direct_manager
+
+    target_id = current_user.id
+    if data.employee_id is not None and data.employee_id != current_user.id:
+        role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+        role = role.lower()
+        if role == "admin" or (role == "manager" and is_direct_manager(db, current_user.id, data.employee_id)):
+            target_id = data.employee_id
+        else:
+            raise HTTPException(status_code=403, detail="You can only log achievements for your direct reports")
+
     try:
-        achievement = achievement_service.create_achievement(db, data, current_user.id)
+        achievement = achievement_service.create_achievement(db, data, target_id)
         return AchievementResponse.model_validate(achievement)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))

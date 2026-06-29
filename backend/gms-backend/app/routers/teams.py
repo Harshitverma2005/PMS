@@ -52,14 +52,10 @@ def update_team(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    require_admin(current_user)
     team = team_service.get_team(db, team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    
-    # Only admin or the team's lead manager can update
-    from app.enums import UserRole
-    if current_user.role != UserRole.ADMIN and team.manager_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to edit this team")
 
     updated_team = team_service.update_team(db, team_id, team_in)
     return updated_team
@@ -70,14 +66,10 @@ def delete_team(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    require_admin(current_user)
     team = team_service.get_team(db, team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    
-    # Only admin or the team's lead manager can delete
-    from app.enums import UserRole
-    if current_user.role != UserRole.ADMIN and team.manager_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to dissolve this team")
 
     if not team_service.delete_team(db, team_id):
         raise HTTPException(status_code=404, detail="Team not found")

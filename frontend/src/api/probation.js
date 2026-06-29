@@ -3,6 +3,8 @@ import API_ENDPOINTS from './apiEndpoints';
 
 const probationService = {
   getAll: () => apiClient.get(API_ENDPOINTS.PROBATION.BASE),
+  create: (data) => apiClient.post(API_ENDPOINTS.PROBATION.BASE, data),
+  scan: () => apiClient.post('/probation/scan'),
   getMe: (userId) => apiClient.get(API_ENDPOINTS.PROBATION.ME(userId)),
   getById: (id) => apiClient.get(API_ENDPOINTS.PROBATION.BY_ID(id)),
   getByEmployee: (employeeId) => apiClient.get(`probation/employee/${employeeId}`),

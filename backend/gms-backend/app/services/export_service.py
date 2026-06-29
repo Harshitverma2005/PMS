@@ -21,10 +21,20 @@ def render(db: Session, form_id: int, requesting_user_id: int) -> Tuple[str, str
     if form is None:
         raise LookupError("ReviewForm not found")
 
-    # Check access: must be employee or manager_of_record
-    if (form.employee_id != requesting_user_id and
-            form.manager_of_record_id != requesting_user_id):
-        raise PermissionError("Access denied — you are not the employee or manager of record for this review")
+    # Check access: the employee, the manager of record, the employee's current
+    # direct manager, or an admin may generate the individual report.
+    from app.enums import UserRole
+    from app.services.hierarchy_service import is_direct_manager
+    requester = db.query(User).filter(User.id == requesting_user_id).first()
+    is_admin = requester is not None and requester.role == UserRole.ADMIN
+    allowed = (
+        is_admin
+        or form.employee_id == requesting_user_id
+        or form.manager_of_record_id == requesting_user_id
+        or is_direct_manager(db, requesting_user_id, form.employee_id)
+    )
+    if not allowed:
+        raise PermissionError("Access denied — you are not authorized to export this review")
 
     # Load the manager ReviewForm for the same employee+cycle
     mgr_form = db.query(ReviewForm).filter(
@@ -68,6 +78,8 @@ def render(db: Session, form_id: int, requesting_user_id: int) -> Tuple[str, str
     growth_areas = ai_draft.get("growth_areas", [])
     citations = form.citations or {}
 
+    workload = _compute_workload(db, form.employee_id)
+
     html = _build_html(
         employee_name=employee_name,
         cycle_name=cycle_name,
@@ -80,10 +92,107 @@ def render(db: Session, form_id: int, requesting_user_id: int) -> Tuple[str, str
         strengths=strengths,
         growth_areas=growth_areas,
         citations=citations,
+        workload=workload,
     )
 
     filename = _sanitize_filename(employee_name, cycle_name)
     return html, filename
+
+
+def render_upward(db: Session, cycle_id: int, manager_id: int, requesting_user_id: int) -> Tuple[str, str]:
+    """Admin-only: render all upward feedback ABOUT a manager for a cycle as one HTML file."""
+    from app.enums import UserRole
+    from app.models.review import ReviewCycle
+
+    requester = db.query(User).filter(User.id == requesting_user_id).first()
+    if requester is None or requester.role != UserRole.ADMIN:
+        raise PermissionError("Only administrators can export upward feedback")
+
+    manager = db.query(User).filter(User.id == manager_id).first()
+    if manager is None:
+        raise LookupError("Manager not found")
+    cycle = db.query(ReviewCycle).filter(ReviewCycle.id == cycle_id).first()
+    cycle_name = cycle.cycle_name if cycle else f"Cycle #{cycle_id}"
+
+    forms = db.query(ReviewForm).filter(
+        ReviewForm.review_cycle_id == cycle_id,
+        ReviewForm.manager_id == manager_id,
+        ReviewForm.form_type == ReviewFormType.UPWARD_FEEDBACK,
+    ).all()
+
+    rows = []
+    ratings = []
+    for f in forms:
+        rater = db.query(User).filter(User.id == f.employee_id).first()
+        fd = f.form_data if isinstance(f.form_data, dict) else {}
+        comment = fd.get("comment") or fd.get("comments") or fd.get("summary") or ""
+        submitted = f.status == ReviewFormStatus.SUBMITTED
+        if submitted and f.final_rating:
+            ratings.append(f.final_rating)
+        rows.append({
+            "rater": rater.name if rater else f"Employee #{f.employee_id}",
+            "rating": f.final_rating if submitted else None,
+            "comment": comment if submitted else "",
+            "submitted": submitted,
+        })
+
+    avg = round(sum(ratings) / len(ratings), 1) if ratings else None
+    html = _build_upward_html(manager.name, cycle_name, rows, avg, len(ratings), len(rows))
+    filename = f"upward_feedback_{_sanitize(manager.name)}_{_sanitize(cycle_name)}.html"
+    return html, filename
+
+
+def _esc(s) -> str:
+    """Minimal HTML escaping for free-text fields."""
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _build_upward_html(manager_name, cycle_name, rows, avg, submitted_count, total_count) -> str:
+    cards = []
+    for r in rows:
+        if r["submitted"]:
+            badge = f'<span class="rating">{r["rating"]}/5</span>'
+            body = f'<p>{_esc(r["comment"]) or "<em>No comment provided.</em>"}</p>'
+        else:
+            badge = '<span class="pending">Not submitted</span>'
+            body = '<p><em>This employee has not submitted their feedback yet.</em></p>'
+        cards.append(
+            f'<div class="card"><div class="cardhead"><strong>{_esc(r["rater"])}</strong>{badge}</div>{body}</div>'
+        )
+    cards_html = "".join(cards) if cards else "<p>No upward feedback for this manager.</p>"
+    avg_html = f"{avg}/5" if avg is not None else "—"
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Upward Feedback — {_esc(manager_name)}</title>
+<style>
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f8f9fa; }}
+  h1 {{ color: #4c1d95; border-bottom: 3px solid #7C3AED; padding-bottom: 12px; }}
+  .meta {{ color: #555; margin-bottom: 8px; }}
+  .summary {{ background: #f3e8ff; border: 1px solid #d8b4fe; border-radius: 10px; padding: 16px 20px; margin: 20px 0; }}
+  .summary .big {{ font-size: 28px; font-weight: 800; color: #6d28d9; }}
+  .note {{ font-size: 12px; color: #6b7280; margin-bottom: 24px; }}
+  .card {{ background: #fff; border: 1px solid #e4e2dc; border-radius: 12px; padding: 16px 20px; margin-bottom: 12px; }}
+  .cardhead {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }}
+  .rating {{ font-weight: 800; color: #6d28d9; }}
+  .pending {{ font-size: 12px; font-weight: 700; color: #d97706; text-transform: uppercase; }}
+  p {{ line-height: 1.6; margin: 4px 0; color: #374151; }}
+</style>
+</head>
+<body>
+  <h1>Upward Feedback — {_esc(manager_name)}</h1>
+  <div class="meta">Review cycle: <strong>{_esc(cycle_name)}</strong></div>
+  <div class="summary">
+    <div>Average rating from team</div>
+    <div class="big">{avg_html}</div>
+    <div>{submitted_count} of {total_count} report(s) submitted</div>
+  </div>
+  <div class="note">Confidential — compiled for administrators. Identifies each rater. The manager does not have access to this report.</div>
+  {cards_html}
+</body>
+</html>"""
 
 
 def _sanitize(s: str) -> str:
@@ -95,10 +204,38 @@ def _sanitize_filename(employee_name: str, cycle_name: str) -> str:
     return f"review_{_sanitize(employee_name)}_{_sanitize(cycle_name)}.html"
 
 
+def _compute_workload(db: Session, employee_id: int) -> dict:
+    """Replicate the frontend workload metric: sum of active-goal weightage plus a
+    small per-goal concurrency penalty, bucketed into a status band."""
+    from app.models.goal import Goal
+    from app.enums import GoalStatus
+
+    active = db.query(Goal).filter(
+        Goal.assignee_id == employee_id,
+        Goal.status == GoalStatus.ACTIVE,
+    ).all()
+    load = sum((g.weightage or 0) for g in active) + len(active) * 5
+    status = "Healthy"
+    if load > 40:
+        status = "Busy"
+    if load > 70:
+        status = "High Load"
+    if load > 100:
+        status = "Overloaded"
+    return {
+        "load": round(load),
+        "status": status,
+        "count": len(active),
+        "goals": [{"title": g.title, "weightage": g.weightage or 0,
+                   "completion": g.completion_percentage or 0,
+                   "at_risk": bool(g.is_at_risk)} for g in active],
+    }
+
+
 def _build_html(
     employee_name, cycle_name, cycle_range, mor_name,
     self_text, mgr_comment, final_rating,
-    summary, strengths, growth_areas, citations,
+    summary, strengths, growth_areas, citations, workload,
 ) -> str:
     strengths_html = "".join(f"<li>{s}</li>" for s in strengths)
     growth_html = "".join(f"<li>{g}</li>" for g in growth_areas)
@@ -112,6 +249,17 @@ def _build_html(
                 f"{cit.get('event_title','')}</li>"
             )
     refs_html = "".join(ref_items) if ref_items else "<li>No citations</li>"
+
+    # Workload section
+    wl = workload or {}
+    wl_status = wl.get("status", "Healthy")
+    wl_colors = {"Healthy": "#10b981", "Busy": "#d97706", "High Load": "#ea580c", "Overloaded": "#dc2626"}
+    wl_color = wl_colors.get(wl_status, "#10b981")
+    wl_rows = "".join(
+        f"<tr><td>{_esc(g.get('title',''))}</td><td>{g.get('weightage',0)}</td>"
+        f"<td>{g.get('completion',0)}%</td><td>{'⚠ At risk' if g.get('at_risk') else '—'}</td></tr>"
+        for g in wl.get("goals", [])
+    ) or "<tr><td colspan='4'>No active goals.</td></tr>"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -131,6 +279,10 @@ def _build_html(
   li {{ margin-bottom: 6px; }}
   .refs {{ font-size: 0.85rem; color: #555; }}
   sup {{ color: #0f3460; font-weight: bold; }}
+  .wl-badge {{ display: inline-block; padding: 4px 12px; border-radius: 999px; color: #fff; font-weight: 700; font-size: 0.85rem; }}
+  table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
+  th, td {{ text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 0.9rem; }}
+  th {{ color: #555; text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.04em; }}
 </style>
 </head>
 <body>
@@ -139,6 +291,18 @@ def _build_html(
   <strong>Employee:</strong> {employee_name}<br>
   <strong>Cycle:</strong> {cycle_name} ({cycle_range})<br>
   <strong>Manager of Record:</strong> {mor_name}
+</div>
+
+<h2>Workload</h2>
+<div class="section">
+  <p>
+    <span class="wl-badge" style="background:{wl_color}">{wl_status}</span>
+    &nbsp; Load score: <strong>{wl.get('load', 0)}</strong> &nbsp;·&nbsp; {wl.get('count', 0)} active goal(s)
+  </p>
+  <table>
+    <tr><th>Active Goal</th><th>Weightage</th><th>Completion</th><th>Risk</th></tr>
+    {wl_rows}
+  </table>
 </div>
 
 <h2>Employee Self-Assessment</h2>

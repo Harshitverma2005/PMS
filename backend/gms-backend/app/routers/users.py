@@ -67,13 +67,15 @@ def update_user(
     current_user: UserModel = Depends(get_current_user)
 ):
     from app.enums import UserRole
-    
-    # Users can update their own name
+
+    role = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
     if current_user.id == user_id:
-        # Members can only update their name
-        if current_user.role == UserRole.MEMBER:
-            if user_in.role or user_in.manager_id or user_in.team_id or user_in.is_active is not None:
-                raise HTTPException(status_code=403, detail="Members can only update their name")
+        # Anyone who isn't an admin may only change their own NAME — never role,
+        # manager, team, or active status (prevents e.g. a manager self-promoting).
+        if role.lower() != 'admin':
+            if (user_in.role is not None or user_in.manager_id is not None
+                    or user_in.team_id is not None or user_in.is_active is not None):
+                raise HTTPException(status_code=403, detail="You can only update your own name")
     else:
         # Only admin can update other users
         require_admin(current_user)

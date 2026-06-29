@@ -157,5 +157,15 @@ class NotificationService:
         self.create(db, admin.id, "no_manager_alert", title, msg, "user", employee.id)
         self._send_email(admin.email, title, msg)
 
+    def notify_readiness_nudge(self, db: Session, employee: User, prompts: list, manager_name: str) -> None:
+        """Send an in-app review-readiness nudge to an employee (no email)."""
+        title = "Review readiness nudge"
+        if prompts:
+            items = "\n".join(f"• {p}" for p in prompts)
+            msg = f"{manager_name} nudged you to get review-ready. Outstanding items:\n{items}"
+        else:
+            msg = f"{manager_name} sent you a nudge — you're fully review-ready. Keep it up! 🎉"
+        self.create(db, employee.id, "readiness_nudge", title, msg, "user", employee.id)
+
 
 notification_service = NotificationService()

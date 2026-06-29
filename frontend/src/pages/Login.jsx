@@ -4,8 +4,8 @@ import {
   Zap, ChevronRight, AlertTriangle, Eye, EyeOff, Target, RefreshCw, Flag, Mail, Lock
 } from "lucide-react";
 import toast from 'react-hot-toast';
-import { authService } from '../api';
 import { useAuthStore } from '../store/auth';
+import authService from '../api/auth';
 
 const COLORS = {
   bg: "#F5F4F0",
@@ -32,7 +32,7 @@ export default function Login() {
   const [focusedField, setFocusedField] = useState(null);
   
   const navigate = useNavigate();
-  const setAuth = useAuthStore((state) => state.setAuth);
+  const setAuth = useAuthStore((s) => s.setAuth);
 
   const handleLogin = async (e) => {
     e?.preventDefault?.();
@@ -40,31 +40,21 @@ export default function Login() {
       setError("Please enter both email and password.");
       return;
     }
-    
+
     setLoading(true);
     setError("");
-    
+
     try {
-      const response = await authService.login(email, password);
-      const user = {
-        id: response.user_id,
-        email: response.email,
-        name: response.name,
-        role: response.role,
-        team_id: response.team_id,
-        manager_id: response.manager_id
-      };
-      setAuth(response.access_token, user);
-      toast.success('Login successful!');
-      window.location.href = '/';
-    } catch (error) {
-      console.error('Login error full:', error);
-      const detail = error.response?.data?.detail;
-      const msg = Array.isArray(detail)
-        ? detail.map(d => d.msg || JSON.stringify(d)).join(', ')
-        : detail || error.message || 'Login failed';
-      setError(msg);
-      toast.error(msg);
+      const data = await authService.login(email, password);
+      setAuth(data);
+      toast.success(`Welcome back, ${data.name}!`);
+      navigate('/');
+    } catch (err) {
+      const msg = err.response?.status === 401
+        ? "Invalid email or password"
+        : (err.response?.data?.detail || "Login failed — is the backend running?");
+      setError(typeof msg === 'string' ? msg : "Login failed");
+      toast.error(typeof msg === 'string' ? msg : "Login failed");
     } finally {
       setLoading(false);
     }

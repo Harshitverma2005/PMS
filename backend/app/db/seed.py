@@ -3,8 +3,10 @@ Seed database with demo data for testing all P0/P1 flows.
 Credentials:
   Admin:    admin@pms.io    / admin123
   Manager:  manager@pms.io  / manager123
+  Manager2: prashant@pms.io / manager123
   Employee: employee@pms.io / emp123
-  Employee2: employee2@pms.io / emp123
+  Employee2: gourav@pms.io / emp123
+  Employee3: awinash@pms.io / emp123
 """
 from datetime import date, timedelta
 from sqlalchemy.orm import Session
@@ -36,6 +38,12 @@ def seed(db: Session) -> None:
                    role="manager", department="Engineering", doj=today - timedelta(days=365),
                    is_active=True, is_first_login=False, review_track="bi_annual")
     db.add(manager)
+
+    manager2 = User(name="prashant", email="prashant@pms.io",
+                    hashed_password=get_password_hash("manager123"),
+                    role="manager", department="Engineering", doj=today - timedelta(days=200),
+                    is_active=True, is_first_login=False, review_track="bi_annual")
+    db.add(manager2)
     db.flush()
 
     emp1 = User(name="harshit", email="employee@pms.io",
@@ -46,7 +54,7 @@ def seed(db: Session) -> None:
                 review_track="bi_annual")
     db.add(emp1)
 
-    emp2 = User(name="Sam QA", email="employee2@pms.io",
+    emp2 = User(name="gourav", email="gourav@pms.io",
                 hashed_password=get_password_hash("emp123"),
                 role="employee", department="Engineering",
                 doj=today - timedelta(days=20),
@@ -54,12 +62,11 @@ def seed(db: Session) -> None:
                 review_track="bi_annual")
     db.add(emp2)
 
-    # Employee without a manager (triggers admin alert)
-    emp3 = User(name="Riley Orphan", email="nomanager@pms.io",
+    emp3 = User(name="awinash", email="awinash@pms.io",
                 hashed_password=get_password_hash("emp123"),
-                role="employee", department="Sales",
+                role="employee", department="Engineering",
                 doj=today - timedelta(days=10),
-                manager_id=None, is_active=True, is_first_login=False,
+                manager_id=manager2.id, is_active=True, is_first_login=False,
                 review_track="bi_annual")
     db.add(emp3)
     db.flush()

@@ -8,6 +8,8 @@ const cycleService = {
   trigger: (id) => apiClient.post(API_ENDPOINTS.CYCLES.TRIGGER(id)),
   close: (id) => apiClient.post(API_ENDPOINTS.CYCLES.CLOSE(id)),
   getCompliance: (id) => apiClient.get(API_ENDPOINTS.CYCLES.COMPLIANCE(id)),
+  getUpwardFeedback: (id) => apiClient.get(API_ENDPOINTS.CYCLES.UPWARD_FEEDBACK(id)),
+  getResults: (id) => apiClient.get(API_ENDPOINTS.CYCLES.RESULTS(id)),
 };
 
 export default cycleService;

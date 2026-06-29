@@ -29,6 +29,18 @@ def create_probation_record(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/scan")
+def scan_triggers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Run the milestone check on demand (same logic the 6-hour scheduler runs):
+    fires 30/60/80-day triggers that are due, escalates overdue ones, sends nudges."""
+    require_admin(current_user)
+    probation_service.check_and_fire_triggers(db)
+    return {"status": "ok"}
+
+
 @router.get("/", response_model=List[ProbationRecordResponse])
 def list_probation_records(
     skip: int = 0, limit: int = 100,
@@ -142,6 +154,14 @@ def recommend_probation(
     current_user: User = Depends(get_current_user)
 ):
     require_manager_or_admin(current_user)
+    # A manager may only recommend for their own direct reports.
+    from app.services.hierarchy_service import is_direct_manager
+    role = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
+    existing = probation_service.get_record(db, record_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Probation record not found")
+    if role.lower() != 'admin' and not is_direct_manager(db, current_user.id, existing.employee_id):
+        raise HTTPException(status_code=403, detail="You can only recommend for your direct reports")
     try:
         record = probation_service.recommend(db, record_id, body, current_user.id)
         record.calculated_status = probation_service.get_calculated_status(record)

@@ -88,6 +88,15 @@ class ReviewService:
                     manager_id=employee.manager_id,
                     form_type=ReviewFormType.MANAGER_FEEDBACK,
                 ))
+                # Upward feedback form — the employee rates their manager.
+                # employee_id = the rater, manager_id = the manager being rated.
+                # Visible to admins only (never cross-shared to the manager).
+                db.add(ReviewForm(
+                    review_cycle_id=cycle_id,
+                    employee_id=employee.id,
+                    manager_id=employee.manager_id,
+                    form_type=ReviewFormType.UPWARD_FEEDBACK,
+                ))
             created_count += 1
 
         cycle.status = ReviewCycleStatus.ACTIVE
@@ -129,10 +138,13 @@ class ReviewService:
     def get_my_forms(self, db: Session, user_id: int) -> List[ReviewForm]:
         user = db.query(User).filter(User.id == user_id).first()
         if user.role in [UserRole.MANAGER, UserRole.ADMIN]:
-            # Manager sees forms they need to fill AND their own self-assessments
+            # Manager sees forms they need to fill AND their own self/upward forms.
+            # IMPORTANT: upward-feedback forms about THIS manager (manager_id == user_id)
+            # are excluded — upward feedback is admin-only, never visible to the ratee.
             return db.query(ReviewForm).filter(
                 (ReviewForm.employee_id == user_id) |
-                (ReviewForm.manager_id == user_id)
+                ((ReviewForm.manager_id == user_id) &
+                 (ReviewForm.form_type != ReviewFormType.UPWARD_FEEDBACK))
             ).all()
         return db.query(ReviewForm).filter(ReviewForm.employee_id == user_id).all()
 
@@ -168,6 +180,13 @@ class ReviewService:
 
         if form.form_type == ReviewFormType.SELF_ASSESSMENT and form.employee_id != user_id:
             raise ValueError("Only the employee can submit self-assessment")
+
+        # Upward feedback: only the rater (the employee) may submit it.
+        if form.form_type == ReviewFormType.UPWARD_FEEDBACK:
+            if form.employee_id != user_id:
+                raise ValueError("Only the employee can submit their upward feedback")
+            if data.final_rating is None or not (1 <= data.final_rating <= 5):
+                raise ValueError("final_rating must be between 1 and 5 for upward feedback")
 
         # Manager form validation
         if form.form_type == ReviewFormType.MANAGER_FEEDBACK:
@@ -278,6 +297,79 @@ class ReviewService:
             "both_submitted": both,
             "pending": total - both,
         }
+
+    def get_cycle_results(self, db: Session, cycle_id: int) -> List[dict]:
+        """Admin-only: per-employee review outcomes for a cycle — self + manager
+        ratings/feedback, flag status, and cross-share state. One row per reviewee."""
+        forms = db.query(ReviewForm).filter(
+            ReviewForm.review_cycle_id == cycle_id,
+            ReviewForm.form_type.in_([ReviewFormType.SELF_ASSESSMENT, ReviewFormType.MANAGER_FEEDBACK]),
+        ).all()
+
+        # Group forms by reviewee (employee_id)
+        by_emp = {}
+        for f in forms:
+            by_emp.setdefault(f.employee_id, {}).setdefault(f.form_type, f)
+
+        def _comment(form):
+            fd = form.form_data if form and isinstance(form.form_data, dict) else None
+            if not fd:
+                return None
+            return fd.get("comment") or fd.get("comments") or fd.get("summary")
+
+        out = []
+        for emp_id, fmap in by_emp.items():
+            employee = db.query(User).filter(User.id == emp_id).first()
+            self_form = fmap.get(ReviewFormType.SELF_ASSESSMENT)
+            mgr_form = fmap.get(ReviewFormType.MANAGER_FEEDBACK)
+            manager = db.query(User).filter(User.id == mgr_form.manager_id).first() if mgr_form else None
+            self_done = bool(self_form and self_form.status == ReviewFormStatus.SUBMITTED)
+            mgr_done = bool(mgr_form and mgr_form.status == ReviewFormStatus.SUBMITTED)
+            out.append({
+                "employee_id": emp_id,
+                "employee_name": employee.name if employee else None,
+                "manager_name": manager.name if manager else None,
+                "self_status": self_form.status.value if self_form else "n/a",
+                "self_submitted": self_done,
+                "manager_status": mgr_form.status.value if mgr_form else "n/a",
+                "manager_submitted": mgr_done,
+                "manager_rating": mgr_form.final_rating if mgr_form else None,
+                "manager_feedback": _comment(mgr_form),
+                "is_flagged": int(mgr_form.is_flagged) if mgr_form and mgr_form.is_flagged else 0,
+                "flag_reason": mgr_form.flag_reason if mgr_form else None,
+                "cross_shared": self_done and mgr_done,
+                # form id used to generate the individual HTML report (export endpoint)
+                "manager_form_id": mgr_form.id if mgr_form else None,
+                "self_form_id": self_form.id if self_form else None,
+            })
+        out.sort(key=lambda r: (r["manager_name"] or "", r["employee_name"] or ""))
+        return out
+
+    def get_upward_feedback(self, db: Session, cycle_id: int) -> List[dict]:
+        """Admin-only: every upward-feedback form in a cycle, enriched with rater +
+        manager names. Returns submitted and pending alike so admins see participation."""
+        forms = db.query(ReviewForm).filter(
+            ReviewForm.review_cycle_id == cycle_id,
+            ReviewForm.form_type == ReviewFormType.UPWARD_FEEDBACK,
+        ).all()
+        out = []
+        for f in forms:
+            rater = db.query(User).filter(User.id == f.employee_id).first()
+            manager = db.query(User).filter(User.id == f.manager_id).first()
+            out.append({
+                "form_id": f.id,
+                "rater_id": f.employee_id,
+                "rater_name": rater.name if rater else None,
+                "manager_id": f.manager_id,
+                "manager_name": manager.name if manager else None,
+                "status": f.status.value,
+                "final_rating": f.final_rating,
+                "form_data": f.form_data,
+                "submitted_at": f.submitted_at.isoformat() if f.submitted_at else None,
+            })
+        # Sort by manager then rater for a tidy admin view
+        out.sort(key=lambda r: (r["manager_name"] or "", r["rater_name"] or ""))
+        return out
 
     def get_history(self, db: Session, employee_id: int) -> List[ReviewPerformanceHistory]:
         return db.query(ReviewPerformanceHistory).filter(

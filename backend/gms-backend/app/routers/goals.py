@@ -26,10 +26,17 @@ def get_goals(db: Session = Depends(get_db), current_user: User = Depends(get_cu
     role = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
     role = role.lower()
     
-    # Filter for members: Only see self-assigned goals
+    # Scope visibility by role:
+    #   members  -> only their own goals
+    #   managers -> only their direct reports' goals (+ their own / ones they created)
+    #   admins   -> everything
     if role in ['member', 'employee']:
         goals = [g for g in goals if g.assignee_id == current_user.id]
-    
+    elif role == 'manager':
+        report_ids = {u.id for u in db.query(User).filter(User.manager_id == current_user.id).all()}
+        report_ids.add(current_user.id)
+        goals = [g for g in goals if g.assignee_id in report_ids or g.creator_id == current_user.id]
+
     result = []
     for goal in goals:
         goal_dict = goal_schema.Goal.model_validate(goal).model_dump()
@@ -99,8 +106,17 @@ def approve_goal(
     current_user: User = Depends(get_current_user)
 ):
     from app.permissions import require_manager_or_admin
+    from app.services.hierarchy_service import is_direct_manager
+    from app.repositories.goal import goal_repository
     require_manager_or_admin(current_user)
-    
+
+    goal = goal_repository.get_by_id(db, goal_id)
+    if not goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    role = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
+    if role.lower() != 'admin' and not is_direct_manager(db, current_user.id, goal.assignee_id):
+        raise HTTPException(status_code=403, detail="Only the assignee's direct manager can approve or reject this goal")
+
     try:
         return goal_service.approve_goal(db, goal_id, current_user.id, approval.approved, approval.rejection_comment)
     except ValueError as e:
@@ -115,18 +131,63 @@ def update_progress(goal_id: int, progress: goal_schema.ProgressUpdate, db: Sess
 
 @router.post("/{goal_id}/complete")
 def complete_goal(goal_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Assignee marks a goal done — it moves to 'pending review' (awaiting_feedback)
+    for the manager to accept / reject / request changes."""
     try:
-        # Allow assignee, manager, or admin to complete
+        from app.repositories.goal import goal_repository
+        from app.services import goal_history_service
+
+        goal = goal_repository.get_by_id(db, goal_id)
+        if not goal:
+            raise HTTPException(status_code=404, detail="Goal not found")
+
         role = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
         is_manager_or_admin = role.lower() in ['admin', 'manager']
-        
-        if not goal or (goal.assignee_id != current_user.id and not is_manager_or_admin):
-            raise HTTPException(status_code=403, detail="Unauthorized - Only assignee or manager/admin can resolve this goal")
+        if goal.assignee_id != current_user.id and not is_manager_or_admin:
+            raise HTTPException(status_code=403, detail="Unauthorized - Only the assignee can submit this goal for review")
         if goal.status != GoalStatus.ACTIVE:
-            raise HTTPException(status_code=400, detail="Can only complete active goals")
-        
-        from app.repositories.goal import goal_repository
+            raise HTTPException(status_code=400, detail="Can only submit an active goal for review")
+
+        from_status = goal.status
         goal_repository.update(db, goal, status=GoalStatus.AWAITING_FEEDBACK, completion_percentage=100)
+        goal_history_service.record_transition(db, goal_id, from_status, GoalStatus.AWAITING_FEEDBACK, current_user.id, "Submitted for review")
+        return goal_service.get_goal_with_stats(db, goal_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{goal_id}/review")
+def review_completion(goal_id: int, body: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Manager reviews a goal that's pending review:
+       action = 'accept' -> completed, 'reject' -> rejected, 'modify' -> back to active.
+       A comment (required for modify/reject) is recorded and shown to the employee."""
+    try:
+        from app.repositories.goal import goal_repository
+        from app.services import goal_history_service, hierarchy_service
+
+        goal = goal_repository.get_by_id(db, goal_id)
+        if not goal:
+            raise HTTPException(status_code=404, detail="Goal not found")
+        if goal.status != GoalStatus.AWAITING_FEEDBACK:
+            raise HTTPException(status_code=400, detail="This goal is not pending review")
+
+        role = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
+        is_admin = role.lower() == 'admin'
+        if not is_admin and not hierarchy_service.is_direct_manager(db, current_user.id, goal.assignee_id):
+            raise HTTPException(status_code=403, detail="Only the assignee's manager can review this goal")
+
+        action = (body.get('action') or '').lower()
+        comment = body.get('comment') or ''
+        mapping = {'accept': GoalStatus.COMPLETED, 'reject': GoalStatus.REJECTED, 'modify': GoalStatus.ACTIVE}
+        if action not in mapping:
+            raise HTTPException(status_code=400, detail="action must be accept, reject, or modify")
+        if action in ('modify', 'reject') and not comment.strip():
+            raise HTTPException(status_code=400, detail="A comment is required when rejecting or requesting changes")
+
+        new_status = mapping[action]
+        from_status = goal.status
+        goal_repository.update(db, goal, status=new_status)
+        goal_history_service.record_transition(db, goal_id, from_status, new_status, current_user.id, comment)
         return goal_service.get_goal_with_stats(db, goal_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -38,8 +38,16 @@ class ProbationService:
         existing = db.query(ProbationRecord).filter(
             ProbationRecord.employee_id == data.employee_id
         ).first()
-        if existing and existing.probation_status == ProbationStatus.IN_PROBATION:
-            raise ValueError("Active probation record already exists for this employee")
+        # employee_id is UNIQUE — an employee can only ever have one probation record.
+        # Surface a clean 400 instead of letting the duplicate INSERT raise a 500.
+        if existing:
+            if existing.probation_status == ProbationStatus.IN_PROBATION:
+                raise ValueError("This employee is already on probation.")
+            status_label = existing.probation_status.value.replace('_', ' ')
+            raise ValueError(
+                f"This employee already has a probation record (status: {status_label}). "
+                "A new probation cannot be started."
+            )
 
         employee = db.query(User).filter(User.id == data.employee_id).first()
         if not employee:
@@ -210,7 +218,11 @@ class ProbationService:
             raise ValueError("Trigger not found")
 
         record = trigger.record
+        if not record:
+            raise ValueError("Probation record not found for this trigger")
         employee = db.query(User).filter(User.id == record.employee_id).first()
+        if not employee:
+            raise ValueError("Employee not found for this probation record")
 
         # Validate who can submit what
         if data.feedback_type == ProbationFeedbackType.SELF:
@@ -274,6 +286,8 @@ class ProbationService:
 
         record = trigger.record
         requester = db.query(User).filter(User.id == user_id).first()
+        if not requester:
+            raise ValueError("User not found")
 
         # Admin sees all
         if requester.role == UserRole.ADMIN:
@@ -315,10 +329,12 @@ class ProbationService:
                     ProbationTrigger.status == ProbationTriggerStatus.BLOCKED
                 ).first()
                 if not existing_alert:
-                    # Create blocked trigger as marker
+                    # Create blocked trigger as marker. Use trigger_day=0 (a sentinel) so
+                    # this placeholder never collides with the real 30/60/80 day triggers —
+                    # otherwise the Day-30 milestone could never fire once a manager is added.
                     blocked = ProbationTrigger(
                         probation_record_id=record.id,
-                        trigger_day=30,  # placeholder
+                        trigger_day=0,
                         trigger_date=date.today(),
                         status=ProbationTriggerStatus.BLOCKED
                     )
@@ -330,6 +346,17 @@ class ProbationService:
                         notification_service.notify_no_manager_assigned(db, employee, admin)
                     print(f"[PROBATION] BLOCKED: No manager for employee {employee.email}")
                 continue
+
+            # Manager is present — clear any stale "no manager" block markers so the
+            # roadmap is clean and Day-30/60/80 can fire normally.
+            stale_blocks = db.query(ProbationTrigger).filter(
+                ProbationTrigger.probation_record_id == record.id,
+                ProbationTrigger.status == ProbationTriggerStatus.BLOCKED
+            ).all()
+            if stale_blocks:
+                for s in stale_blocks:
+                    db.delete(s)
+                db.commit()
 
             for trigger_day in TRIGGER_DAYS:
                 if working_days < trigger_day:

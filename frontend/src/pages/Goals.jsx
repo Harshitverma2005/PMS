@@ -1,283 +1,301 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { 
-  Plus, Filter, Target, ChevronRight, Search, 
-  ArrowUpRight, Clock, CheckCircle2, AlertTriangle, Flag,
-  XCircle, Zap, TrendingUp, Layers, User, Calendar
-} from 'lucide-react';
-import Layout from '../components/Layout';
-import { goalService } from '../api';
-import { GoalStatus } from '../constants/enums';
-import { useAuthStore } from '../store/auth';
-import { formatDate } from '../utils/format';
+import { Target, CheckCircle, Clock, AlertCircle, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import Layout from '../components/Layout';
+import { useAuthStore } from '../store/auth';
+import { goalService, userService } from '../api';
+import { GoalStatus, STATUS_COLORS } from '../constants/enums';
+import { formatEnumValue } from '../utils/format';
 
-const COLORS = {
-  bg: "#FAFAFA",
-  surface: "#FFFFFF",
-  card: "rgba(255, 255, 255, 0.8)",
-  border: "rgba(229, 231, 235, 0.5)",
-  accent: "#3B82F6",
-  emerald: "#10B981",
-  amber: "#F59E0B",
-  rose: "#EF4444",
-  violet: "#8B5CF6",
-  text: "#111827",
-  muted: "#4B5563",
-  subtle: "#9CA3AF",
-};
-
-const StatusPill = ({ status, atRisk }) => {
-  const displayStatus = atRisk ? 'At Risk' : status;
-  const config = {
-    [GoalStatus.ACTIVE]: { bg: `${COLORS.accent}15`, text: COLORS.accent, label: "Active" },
-    [GoalStatus.COMPLETED]: { bg: `${COLORS.emerald}15`, text: COLORS.emerald, label: "Completed" },
-    [GoalStatus.PENDING_APPROVAL]: { bg: `${COLORS.amber}15`, text: COLORS.amber, label: "Pending" },
-    [GoalStatus.REJECTED]: { bg: `${COLORS.rose}15`, text: COLORS.rose, label: "Rejected" },
-    'At Risk': { bg: `${COLORS.rose}15`, text: COLORS.rose, label: "At Risk" },
-  };
-  const c = config[displayStatus] || { bg: "rgba(0,0,0,0.05)", text: COLORS.muted, label: displayStatus };
-  
-  return (
-    <div style={{
-      display: "inline-flex", padding: "4px 12px", borderRadius: 20,
-      background: c.bg, color: c.text,
-      fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em",
-      backdropFilter: "blur(4px)", border: `1px solid ${c.text}20`
-    }}>{c.label}</div>
-  );
-};
-
-const GoalCard = ({ goal, currentUser, onApprove, onReject }) => {
-  const navigate = useNavigate();
-  const role = currentUser?.role?.toString().toLowerCase().split('.').pop() || '';
-  const canApprove = (role === 'admin' || role === 'manager') && goal.assignee_id !== currentUser?.id;
-  
-  const levelColors = {
-    company: COLORS.violet,
-    team: COLORS.accent,
-    individual: COLORS.emerald
-  };
-  const themeColor = levelColors[goal.level] || COLORS.accent;
-
-  return (
-    <div 
-      onClick={() => navigate(`/goals/${goal.id}`)}
-      style={{
-        display: "flex", flexDirection: "column", gap: 16, 
-        padding: 24, background: COLORS.card,
-        border: `1.5px solid ${COLORS.border}`, borderRadius: 24,
-        textDecoration: "none", transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-        cursor: "pointer", position: "relative", overflow: "hidden",
-        backdropFilter: "blur(12px)",
-        boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)"
-      }} 
-      onMouseEnter={e => {
-        e.currentTarget.style.transform = "translateY(-4px)";
-        e.currentTarget.style.borderColor = themeColor + "40";
-        e.currentTarget.style.boxShadow = `0 20px 25px -5px ${themeColor}15`;
-      }} 
-      onMouseLeave={e => {
-        e.currentTarget.style.transform = "translateY(0)";
-        e.currentTarget.style.borderColor = COLORS.border;
-        e.currentTarget.style.boxShadow = "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)";
-      }}
-    >
-      {/* Level Gradient Accent */}
-      <div style={{ 
-        position: "absolute", top: 0, left: 0, right: 0, height: 4, 
-        background: `linear-gradient(90deg, ${themeColor}00, ${themeColor}, ${themeColor}00)` 
-      }} />
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: themeColor, textTransform: "uppercase", letterSpacing: "0.1em" }}>{goal.level}</span>
-            {goal.is_at_risk && <div style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.rose, boxShadow: `0 0 10px ${COLORS.rose}` }} />}
-          </div>
-          <h3 style={{ fontSize: 16, fontWeight: 800, color: COLORS.text, lineHeight: 1.3 }}>{goal.title}</h3>
-        </div>
-        <div style={{ p: 8, borderRadius: 12, background: `${themeColor}10`, color: themeColor }}>
-          <ArrowUpRight size={18} />
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <TrendingUp size={14} color={COLORS.subtle} />
-            <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted }}>Progress</span>
-          </div>
-          <span style={{ fontSize: 14, fontWeight: 900, color: themeColor }}>{goal.completion_percentage}%</span>
-        </div>
-        <div style={{ width: "100%", height: 8, background: "rgba(0,0,0,0.04)", borderRadius: 10, overflow: "hidden" }}>
-          <div style={{ 
-            width: `${goal.completion_percentage}%`, height: "100%", 
-            background: `linear-gradient(90deg, ${themeColor}, ${themeColor}dd)`, 
-            borderRadius: 10, transition: "width 1s ease-out" 
-          }} />
-        </div>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "auto", paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ 
-            width: 32, height: 32, borderRadius: 10, background: `${COLORS.accent}10`, 
-            display: "flex", alignItems: "center", justifyContent: "center",
-            border: `1px solid ${COLORS.accent}20`
-          }}>
-            <User size={14} color={COLORS.accent} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.text }}>{goal.assignee?.name || "Unassigned"}</span>
-            <span style={{ fontSize: 9, fontWeight: 600, color: COLORS.subtle }}>Owner</span>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {goal.status === GoalStatus.PENDING_APPROVAL && canApprove && (
-            <div style={{ display: "flex", gap: 4, marginRight: 4 }}>
-              <button onClick={(e) => onApprove(e, goal.id)} style={{ background: COLORS.emerald, border: "none", width: 28, height: 28, borderRadius: 8, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "0.2s" }} onMouseEnter={e => e.currentTarget.style.transform = "scale(1.1)"} onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}>
-                <CheckCircle2 size={14} />
-              </button>
-            </div>
-          )}
-          <StatusPill status={goal.status} atRisk={goal.is_at_risk} />
-        </div>
-      </div>
-    </div>
-  );
-};
+function normalizeList(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+}
 
 export default function Goals() {
-  const [goals, setGoals] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchParams] = useSearchParams();
-  const currentUser = useAuthStore((state) => state.user);
   const navigate = useNavigate();
+  const currentUser = useAuthStore((s) => s.user);
+  const isManagerOrAdmin = currentUser?.role === 'manager' || currentUser?.role === 'admin';
 
-  const handleApprove = async (e, goalId) => {
-    e.preventDefault(); e.stopPropagation();
-    try {
-      await goalService.approve(goalId);
-      toast.success('Objective Strategy Validated');
-      loadGoals();
-    } catch (e) { toast.error('Approval failed'); }
-  };
-
-  const handleReject = async (e, goalId) => {
-    e.preventDefault(); e.stopPropagation();
-    const reason = prompt("Enter specific feedback for rejection:");
-    if (!reason) return;
-    try {
-      await goalService.reject(goalId, reason);
-      toast.success('Intervention recorded');
-      loadGoals();
-    } catch (e) { toast.error('Intervention failed'); }
-  };
-
-  useEffect(() => {
-    loadGoals();
-  }, [searchParams]);
+  const [goals, setGoals] = useState([]);
+  const [reportIds, setReportIds] = useState(new Set());
+  const [members, setMembers] = useState([]); // admin: all real member-employees
+  const [loading, setLoading] = useState(true);
 
   const loadGoals = async () => {
     try {
-      const response = await goalService.getAll();
-      setGoals(Array.isArray(response.data) ? response.data : []);
-    } catch (error) {
-      toast.error('Strategic Pipeline unavailable');
+      const res = await goalService.getAll();
+      setGoals(normalizeList(res.data));
+    } catch (err) {
+      toast.error('Failed to load goals');
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) return (
-    <Layout>
-      <div style={{ height: "60vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ width: 40, height: 40, borderRadius: "50%", border: `3px solid ${COLORS.border}`, borderTopColor: COLORS.accent, animation: "spin 1s linear infinite" }} />
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </Layout>
-  );
+  useEffect(() => {
+    loadGoals();
+    // For managers, figure out which assignees are their direct reports so we
+    // only surface delete on those goals (the backend enforces this too).
+    if (currentUser?.role === 'manager') {
+      userService.getAll()
+        .then(res => setReportIds(new Set(normalizeList(res.data).filter(u => u.manager_id === currentUser.id).map(u => u.id))))
+        .catch(() => {});
+    }
+    // For admins, load all real member-employees for the per-member breakdown.
+    if (currentUser?.role === 'admin') {
+      userService.getAll()
+        .then(res => setMembers(normalizeList(res.data).filter(u => u.role === 'member' && u.is_active !== false && !(u.email || '').endsWith('@opstree.com'))))
+        .catch(() => {});
+    }
+  }, [currentUser]);
 
-  const levels = ["company", "team", "individual"];
+  // Only managers may delete their reports' goals. Admins cannot delete goals.
+  const canDelete = (goal) => {
+    if (currentUser?.role === 'manager') return reportIds.has(goal.assignee_id) || goal.creator_id === currentUser.id;
+    return false;
+  };
+  const showActions = currentUser?.role === 'manager';
+
+  const handleDelete = async (goal) => {
+    if (!confirm(`Delete "${goal.title}"? This cannot be undone.`)) return;
+    try {
+      await goalService.delete(goal.id);
+      toast.success('Goal deleted');
+      await loadGoals();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to delete goal');
+    }
+  };
+
+  const handleProgressChange = async (id, newProgress) => {
+    try {
+      await goalService.updateProgress(id, parseInt(newProgress, 10));
+      await loadGoals();
+    } catch (err) {
+      toast.error('Failed to update progress');
+    }
+  };
+
+  const handleApprove = async (id) => {
+    try {
+      await goalService.approve(id);
+      toast.success('Goal approved!');
+      await loadGoals();
+    } catch (err) {
+      toast.error('Failed to approve goal');
+    }
+  };
+
+  const handleReject = async (id) => {
+    try {
+      await goalService.reject(id, 'Rejected');
+      toast.success('Goal rejected.');
+      await loadGoals();
+    } catch (err) {
+      toast.error('Failed to reject goal');
+    }
+  };
+
+  // An admin's goals view is scoped to the actual employees (members),
+  // excluding legacy @opstree.com seed accounts. Members/managers are already
+  // scoped by the backend.
+  const displayGoals = currentUser?.role === 'admin'
+    ? goals.filter(g => g.assignee?.role === 'member' && !(g.assignee?.email || '').endsWith('@opstree.com'))
+    : goals;
+
+  const pendingApprovals = currentUser?.role === 'manager'
+    ? displayGoals.filter(g => g.status === GoalStatus.PENDING_APPROVAL && g.assignee_id !== currentUser?.id)
+    : [];
+
+  // Admin: per-member task breakdown (assigned / completed / rejected / remaining).
+  const memberRows = currentUser?.role === 'admin'
+    ? members.map(u => {
+        const gs = goals.filter(g => g.assignee_id === u.id);
+        const completed = gs.filter(g => g.status === GoalStatus.COMPLETED).length;
+        const rejected = gs.filter(g => g.status === GoalStatus.REJECTED).length;
+        return { id: u.id, name: u.name, email: u.email, assigned: gs.length, completed, rejected, remaining: gs.length - completed - rejected };
+      }).sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    : [];
 
   return (
     <Layout>
-      <div style={{ display: "flex", flexDirection: "column", gap: 32, paddingBottom: 40 }}>
-        
-        {/* Modern Header */}
-        <div style={{ 
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          borderRadius: 24, color: "#fff", position: "relative", overflow: "hidden",
-        }}>
-          {/* Decorative background shapes */}
-          
-
-          <Link to="/goals/new" style={{
-            background: "#fff", border: "none", textDecoration: "none",
-            padding: "12px 24px", borderRadius: 14, fontSize: 14, fontWeight: 800,
-            color: COLORS.accent, display: "flex", alignItems: "center", gap: 8,
-            transition: "0.2s", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)"
-          }} onMouseEnter={e => e.currentTarget.style.transform = "scale(1.05)"} onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}>
-            <Plus size={18} strokeWidth={3} /> create goal
-          </Link>
+      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex justify-between items-end border-b border-gray-200 pb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Goals & Objectives</h1>
+            <p className="text-gray-500 mt-2">Track progress, manage proposals, and align on objectives.</p>
+          </div>
+          {currentUser?.role !== 'admin' && (
+            <button onClick={() => navigate('/goals/new')} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-medium shadow-sm transition-colors flex items-center gap-2">
+              <Target size={18} /> {currentUser?.role === 'manager' ? 'Assign Goal' : 'Propose Goal'}
+            </button>
+          )}
         </div>
 
-        {/* Global Pipeline View */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 40 }}>
-          {levels.map(level => {
-            const levelGoals = goals.filter(g => g.level === level);
-            return (
-              <div key={level} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 8px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ 
-                      width: 40, height: 40, borderRadius: 14, 
-                      background: level === 'company' ? `${COLORS.violet}15` : (level === 'team' ? `${COLORS.accent}15` : `${COLORS.emerald}15`),
-                      display: "flex", alignItems: "center", justifyContent: "center" 
-                    }}>
-                      {level === 'company' ? <Layers size={20} color={COLORS.violet} /> : (level === 'team' ? <User size={20} color={COLORS.accent} /> : <Target size={20} color={COLORS.emerald} />)}
-                    </div>
-                    <div>
-                      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, textTransform: "capitalize" }}>{level} Pipeline</h2>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.subtle }}>{levelGoals.length} Active Modules</span>
-                    </div>
+        {currentUser?.role === 'admin' && (
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-5 border-b border-gray-200 bg-gray-50/50">
+              <h3 className="font-semibold text-gray-900">Task Breakdown by Employee</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  <tr>
+                    <th className="px-6 py-4">Employee</th>
+                    <th className="px-6 py-4 text-center">Assigned</th>
+                    <th className="px-6 py-4 text-center">Completed</th>
+                    <th className="px-6 py-4 text-center">Rejected</th>
+                    <th className="px-6 py-4 text-center">Remaining</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {loading ? (
+                    <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-500">Loading…</td></tr>
+                  ) : memberRows.length === 0 ? (
+                    <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-500">No employees found.</td></tr>
+                  ) : memberRows.map(m => (
+                    <tr key={m.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs">{m.name?.charAt(0)?.toUpperCase()}</div>
+                          <div>
+                            <div className="font-medium text-gray-900">{m.name}</div>
+                            <div className="text-xs text-gray-500">{m.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-center font-semibold text-gray-900">{m.assigned}</td>
+                      <td className="px-6 py-4 text-center"><span className="font-semibold text-emerald-700">{m.completed}</span></td>
+                      <td className="px-6 py-4 text-center"><span className="font-semibold text-red-600">{m.rejected}</span></td>
+                      <td className="px-6 py-4 text-center"><span className="font-semibold text-amber-600">{m.remaining}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {isManagerOrAdmin && pendingApprovals.length > 0 && (
+          <div className="bg-orange-50 border border-orange-200 rounded-2xl p-6">
+            <h3 className="font-semibold text-orange-900 mb-4 flex items-center gap-2"><AlertCircle size={20} /> Pending Goal Approvals</h3>
+            <div className="space-y-4">
+              {pendingApprovals.map(goal => (
+                <div key={goal.id} className="bg-white rounded-xl p-4 shadow-sm border border-orange-100 flex justify-between items-center">
+                  <div>
+                    <h4 className="font-bold text-gray-900">{goal.title}</h4>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Requested by {goal.assignee?.name || goal.creator?.name || '—'} • Priority: {formatEnumValue(goal.priority)} • Weightage: {goal.weightage ?? 0}%
+                    </p>
+                    {goal.description && <p className="text-sm text-gray-500 mt-1 line-clamp-1 italic">{goal.description}</p>}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => handleReject(goal.id)} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg">Reject</button>
+                    <button onClick={() => handleApprove(goal.id)} className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg">Approve</button>
                   </div>
                 </div>
-                
-                {levelGoals.length > 0 ? (
-                  <div style={{ 
-                    display: "grid", 
-                    gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", 
-                    gap: 24 
-                  }}>
-                    {levelGoals.map(goal => (
-                      <GoalCard 
-                        key={goal.id} 
-                        goal={goal} 
-                        currentUser={currentUser}
-                        onApprove={handleApprove}
-                        onReject={handleReject}
-                      />
-                    ))}
-                  </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {currentUser?.role !== 'admin' && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-5 border-b border-gray-200 bg-gray-50/50">
+            <h3 className="font-semibold text-gray-900">All Goals</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <tr>
+                  <th className="px-6 py-4">Goal Title</th>
+                  {isManagerOrAdmin && <th className="px-6 py-4">Assignee</th>}
+                  <th className="px-6 py-4">Progress</th>
+                  <th className="px-6 py-4">Priority</th>
+                  <th className="px-6 py-4">Status</th>
+                  {showActions && <th className="px-6 py-4 text-right">Actions</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {loading ? (
+                  <tr><td colSpan={isManagerOrAdmin ? (showActions ? 6 : 5) : 4} className="px-6 py-8 text-center text-gray-500">Loading goals…</td></tr>
+                ) : displayGoals.length === 0 ? (
+                  <tr><td colSpan={isManagerOrAdmin ? (showActions ? 6 : 5) : 4} className="px-6 py-8 text-center text-gray-500">No goals found.</td></tr>
                 ) : (
-                  <div style={{ 
-                    padding: 40, borderRadius: 24, background: "rgba(0,0,0,0.02)", 
-                    border: `2px dashed ${COLORS.border}`, display: "flex", 
-                    flexDirection: "column", alignItems: "center", gap: 12, color: COLORS.subtle
-                  }}>
-                    <div style={{ p: 12, background: "#fff", borderRadius: "50%", boxShadow: "0 2px 4px rgba(0,0,0,0.05)" }}>
-                       <Target size={24} />
-                    </div>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>No tactical objectives defined for this pipeline</span>
-                  </div>
+                  displayGoals.map(goal => {
+                    const progress = goal.completion_percentage ?? 0;
+                    const isOwner = currentUser?.id === goal.assignee_id;
+                    return (
+                      <tr key={goal.id} onClick={() => navigate(`/goals/${goal.id}`)} className="hover:bg-gray-50 transition-colors cursor-pointer">
+                        <td className="px-6 py-4">
+                          <div className="font-medium text-gray-900">{goal.title}</div>
+                          <div className="text-xs text-gray-500 mt-1 line-clamp-1">{goal.description}</div>
+                        </td>
+                        {isManagerOrAdmin && (
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs">{goal.assignee?.name?.charAt(0) || '?'}</div>
+                              <span className="text-sm font-medium text-gray-900">{goal.assignee?.name || 'Unassigned'}</span>
+                            </div>
+                          </td>
+                        )}
+                        <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                          {isOwner && goal.status === GoalStatus.ACTIVE ? (
+                            <div className="flex items-center gap-3 w-40">
+                              <input
+                                type="range"
+                                min="0" max="100"
+                                defaultValue={progress}
+                                onMouseUp={(e) => handleProgressChange(goal.id, e.target.value)}
+                                onTouchEnd={(e) => handleProgressChange(goal.id, e.target.value)}
+                                className="flex-1 accent-blue-600 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                              />
+                              <span className="text-sm font-bold text-blue-600 w-10 text-right">{progress}%</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 w-32">
+                              <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-blue-600 rounded-full" style={{ width: `${progress}%` }} />
+                              </div>
+                              <span className="text-xs font-medium text-gray-600 w-8 text-right">{progress}%</span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-600">{formatEnumValue(goal.priority)}</td>
+                        <td className="px-6 py-4">
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 w-max ${STATUS_COLORS[goal.status] || 'bg-gray-100 text-gray-700'}`}>
+                            {goal.status === GoalStatus.ACTIVE ? <CheckCircle size={12} /> : goal.status === GoalStatus.PENDING_APPROVAL ? <Clock size={12} /> : null}
+                            {formatEnumValue(goal.status)}
+                          </span>
+                        </td>
+                        {showActions && (
+                          <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                            {canDelete(goal) ? (
+                              <button
+                                onClick={() => handleDelete(goal)}
+                                title="Delete goal"
+                                className="inline-flex items-center justify-center p-2 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            ) : (
+                              <span className="text-gray-300">—</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })
                 )}
-              </div>
-            );
-          })}
+              </tbody>
+            </table>
+          </div>
         </div>
+        )}
       </div>
     </Layout>
   );

@@ -71,6 +71,7 @@ class ReviewCycleStatus(str, Enum):
 class ReviewFormType(str, Enum):
     SELF_ASSESSMENT = "self_assessment"
     MANAGER_FEEDBACK = "manager_feedback"
+    UPWARD_FEEDBACK = "upward_feedback"  # employee rates their manager (admin-only visibility)
 
 class ReviewFormStatus(str, Enum):
     PENDING = "pending"

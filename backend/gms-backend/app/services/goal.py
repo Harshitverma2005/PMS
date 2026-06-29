@@ -49,10 +49,16 @@ class GoalService:
         
         # Robust role check via string value comparison
         creator_role = creator.role.value if hasattr(creator.role, 'value') else str(creator.role)
-        if creator_id != goal_data.assignee_id and creator_role.lower() in [UserRole.ADMIN.value, UserRole.MANAGER.value]:
+        role = creator_role.lower()
+        if creator_id != goal_data.assignee_id and role in [UserRole.ADMIN.value, UserRole.MANAGER.value]:
+            # Manager/admin assigning a goal to someone else -> goes straight to active.
             status = GoalStatus.ACTIVE
+        elif role == UserRole.MEMBER.value:
+            # Employee proposing their own goal -> waits for their manager's approval.
+            status = GoalStatus.PENDING_APPROVAL
         else:
-            status = GoalStatus.DRAFT
+            # Manager/admin's own goal -> active.
+            status = GoalStatus.ACTIVE
         
         goal_dict = goal_data.model_dump(exclude={'subtasks'})
         goal_dict['due_date'] = goal_data.due_date
@@ -157,12 +163,26 @@ class GoalService:
         return subtask
     
     def delete_goal(self, db: Session, goal_id: int, user_id: int) -> bool:
+        from app.services import hierarchy_service
+
         goal = goal_repository.get_by_id(db, goal_id)
         if not goal:
             raise ValueError("Goal not found")
-        if goal.creator_id != user_id and goal.assignee_id != user_id:
-            raise ValueError("Unauthorized - only creator or assignee can archive this goal")
-        
+
+        # A manager may delete goals belonging to their direct reports.
+        # Admins are intentionally NOT allowed to delete goals.
+        is_manager_of_assignee = (
+            goal.assignee_id is not None
+            and hierarchy_service.is_direct_manager(db, user_id, goal.assignee_id)
+        )
+
+        if (
+            goal.creator_id != user_id
+            and goal.assignee_id != user_id
+            and not is_manager_of_assignee
+        ):
+            raise ValueError("Unauthorized - only the creator, assignee, or their direct manager can delete this goal")
+
         # We can implement a soft-delete or hard-delete here
         goal_repository.delete(db, id=goal_id)
         return True

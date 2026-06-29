@@ -5,9 +5,8 @@ import {
   AlertCircle, ChevronRight, Activity, Zap, Star
 } from 'lucide-react';
 import Layout from '../components/Layout';
-import { goalService, feedbackService } from '../api';
-import { formatDate } from '../utils/format';
 import { useAuthStore } from '../store/auth';
+import { feedbackService } from '../api';
 import toast from 'react-hot-toast';
 
 const COLORS = {
@@ -26,69 +25,87 @@ const COLORS = {
   subtle: "#9CA3AF",
 };
 
+const asArray = (res) => {
+  const d = res?.data;
+  if (Array.isArray(d)) return d;
+  if (Array.isArray(d?.data)) return d.data;
+  if (Array.isArray(d?.items)) return d.items;
+  return [];
+};
+
+const normalizeForm = (f) => ({
+  ...f,
+  employeeId: f.employeeId ?? f.employee_id,
+  createdAt: f.createdAt ?? f.created_at,
+});
+
 export default function PerformanceReview() {
-  const [forms, setForms] = useState([]);
+  const currentUser = useAuthStore((s) => s.user);
+
+  const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
-  const currentUser = useAuthStore((state) => state.user);
 
+  // "My Reviews" = review forms returned for the current user by the backend.
   useEffect(() => {
-    loadForms();
-  }, []);
+    let active = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await feedbackService.getMyForms();
+        if (active) setReviews(asArray(res).map(normalizeForm));
+      } catch (err) {
+        if (active) toast.error('Failed to load your reviews');
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [currentUser?.id]);
 
-  const loadForms = async () => {
-    try {
-      const response = await feedbackService.getMyForms();
-      setForms(response.data);
-    } catch (error) {
-      toast.error('Failed to load performance pipeline');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // "My Reviews" = forms ABOUT the current user (their self-assessment + the
+  // manager review of them). Manager-feedback forms a manager must fill for their
+  // reports live in Review Studio, not here.
+  const myReviews = reviews.filter(f => (f.employee_id ?? f.employeeId) === currentUser?.id);
 
-  if (loading) return (
-    <Layout>
-      <div style={{ height: "60vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ width: 32, height: 32, borderRadius: "50%", border: `3px solid ${COLORS.border}`, borderTopColor: COLORS.accent, animation: "spin 1s linear infinite" }} />
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </Layout>
-  );
-
-  const pendingSelf = forms.filter(f => f.form_type === 'SELF_ASSESSMENT' && f.status !== 'submitted');
-  const pendingManager = forms.filter(f => f.form_type === 'MANAGER_FEEDBACK' && f.status !== 'submitted');
-  const submitted = forms.filter(f => f.status === 'submitted');
+  // Employees action their own self-assessment AND their upward feedback (rating
+  // their manager). The manager review of them is read-only, unlocked after cross-share.
+  const pendingSelf = myReviews.filter(f => f.form_type === 'self_assessment' && f.status !== 'submitted');
+  const pendingUpward = myReviews.filter(f => f.form_type === 'upward_feedback' && f.status !== 'submitted');
+  const pendingManager = [];
+  const submitted = myReviews.filter(f => f.status === 'submitted');
 
   return (
     <Layout>
-      <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+      <div className="page active" id="page-performance">
         
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div className="page-header flex justify-between items-center" style={{ marginBottom: '24px' }}>
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 800, color: COLORS.text, letterSpacing: "-0.03em" }}>Performance Feedback</h1>
-            <p style={{ fontSize: 14, color: COLORS.muted, marginTop: 4 }}>Review cycle orchestration and personal performance history</p>
+            <div className="page-title">Performance Feedback</div>
+            <div className="page-desc">Review cycle orchestration and personal performance history</div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <div style={{
-              background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-              padding: "8px 16px", borderRadius: 10, fontSize: 12, fontWeight: 700,
-              color: COLORS.muted, display: "flex", alignItems: "center", gap: 8,
+          <div style={{ display: "flex", gap: '8px' }}>
+            <div className="card" style={{
+              padding: "8px 16px", borderRadius: '10px', fontSize: '12px', fontWeight: 700,
+              color: 'var(--text-muted)', display: "flex", alignItems: "center", gap: '8px',
             }}>
-               <Activity size={14} /> Total Cycles: {forms.length}
+               <Activity size={14} /> Total Cycles: {myReviews.length}
             </div>
           </div>
         </div>
 
         {/* Action Required Section */}
-        {(pendingSelf.length > 0 || pendingManager.length > 0) && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 800, color: COLORS.amber }}>
+        {(pendingSelf.length > 0 || pendingUpward.length > 0 || pendingManager.length > 0) && (
+          <div style={{ display: "flex", flexDirection: "column", gap: '16px', marginBottom: '24px' }}>
+            <div style={{ display: "flex", alignItems: "center", gap: '8px', fontSize: '13px', fontWeight: 700, color: '#F59E0B' }}>
               <AlertCircle size={16} />
-              <span style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}>Critical Action Required</span>
+              <span style={{ textTransform: "uppercase" }}>Critical Action Required</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: '20px' }}>
               {pendingSelf.map(form => (
+                <FeedbackCard key={form.id} form={form} isAction />
+              ))}
+              {pendingUpward.map(form => (
                 <FeedbackCard key={form.id} form={form} isAction />
               ))}
               {pendingManager.map(form => (
@@ -99,21 +116,28 @@ export default function PerformanceReview() {
         )}
 
         {/* History / Completed Section */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 800, color: COLORS.muted }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: '16px' }}>
+          <div style={{ display: "flex", alignItems: "center", gap: '8px', fontSize: '13px', fontWeight: 700, color: 'var(--text-muted)' }}>
             <Clock size={16} />
-            <span style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}>Review Archive & Completed</span>
+            <span style={{ textTransform: "uppercase" }}>Review Archive & Completed</span>
           </div>
-          {submitted.length > 0 ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+          {loading ? (
+            <div style={{
+              textAlign: "center", padding: '64px', border: '2px dashed var(--border)',
+              borderRadius: '12px', color: 'var(--text-muted)', fontSize: '14px',
+            }}>
+               Loading your reviews…
+            </div>
+          ) : submitted.length > 0 ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: '20px' }}>
               {submitted.map(form => (
                 <FeedbackCard key={form.id} form={form} />
               ))}
             </div>
           ) : (
-            <div style={{ 
-              textAlign: "center", padding: 64, border: `2px dashed ${COLORS.border}`, 
-              borderRadius: 20, color: COLORS.subtle, fontSize: 14,
+            <div style={{
+              textAlign: "center", padding: '64px', border: '2px dashed var(--border)',
+              borderRadius: '12px', color: 'var(--text-muted)', fontSize: '14px',
             }}>
                No historical records detected in current data layer.
             </div>
@@ -125,62 +149,62 @@ export default function PerformanceReview() {
 }
 
 function FeedbackCard({ form, isAction }) {
-  const isSelf = form.form_type === 'SELF_ASSESSMENT';
-  
+  const isSelf = form.form_type === 'self_assessment';
+  const isUpward = form.form_type === 'upward_feedback';
+  const title = isSelf ? 'Self-Review Reflection' : isUpward ? 'Upward Feedback' : 'Manager Review';
+  const tag = isSelf ? 'Self' : isUpward ? 'Manager rating' : 'Manager';
+  const Icon = isSelf ? User : isUpward ? Star : Shield;
+  const iconColor = isSelf ? 'var(--primary)' : isUpward ? '#7C3AED' : '#10B981';
+  const iconBg = isSelf ? 'var(--primary-light)' : isUpward ? 'rgba(124,58,237,0.1)' : 'rgba(16,185,129,0.1)';
+
   return (
-    <div style={{
-      background: COLORS.card, border: isAction ? `1.5px solid ${COLORS.amber}40` : `1.5px solid ${COLORS.border}`,
-      borderRadius: 20, padding: 24, display: "flex", flexDirection: "column", gap: 16,
-      position: "relative", boxShadow: isAction ? "0 4px 12px rgba(217, 119, 6, 0.05)" : "0 1px 3px rgba(0,0,0,0.03)",
-      transition: "transform 0.2s, box-shadow 0.2s",
+    <div className="card" style={{
+      border: isAction ? '1px solid #F59E0B' : '1px solid var(--border)',
+      padding: '24px', display: "flex", flexDirection: "column", gap: '16px',
+      position: "relative"
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <div style={{ 
-            width: 40, height: 40, borderRadius: 10, 
-            background: isSelf ? `${COLORS.accent}10` : `${COLORS.emerald}10`,
+        <div style={{ display: "flex", gap: '12px', alignItems: "center" }}>
+          <div style={{
+            width: '40px', height: '40px', borderRadius: '10px',
+            background: iconBg,
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            {isSelf ? <User size={20} color={COLORS.accent} /> : <Shield size={20} color={COLORS.emerald} />}
+            <Icon size={20} color={iconColor} />
           </div>
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 800, color: COLORS.text }}>
-              {isSelf ? 'Self-Review Reflection' : 'Manager Review'}
+            <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>
+              {title}
             </h3>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-               <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase" }}>{form.context} Track</span>
+            <div style={{ display: "flex", alignItems: "center", gap: '6px' }}>
+               <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: "uppercase" }}>{tag}</span>
             </div>
           </div>
         </div>
-        <div style={{
-          padding: "4px 10px", borderRadius: 6,
-          background: form.status === 'pending' ? `${COLORS.amber}12` : `${COLORS.emerald}12`,
-          color: form.status === 'pending' ? COLORS.amber : COLORS.emerald,
-          fontSize: 10, fontWeight: 800, textTransform: "uppercase",
+        <div className="badge" style={{
+          background: form.status === 'pending' ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)',
+          color: form.status === 'pending' ? '#F59E0B' : '#10B981',
         }}>
           {form.status}
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>{form.cycle?.name || 'Standard Orchestration Window'}</div>
-        <div style={{ fontSize: 11, color: COLORS.muted }}>
-           {isAction ? "Due for submission" : `Finalized on ${formatDate(form.submitted_at)}`}
+      <div style={{ display: "flex", flexDirection: "column", gap: '4px' }}>
+        <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>{form.cycle?.name || `Review Cycle #${form.review_cycle_id}`}</div>
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+           {isAction ? "Due for submission" : `Finalized on ${form.createdAt ? new Date(form.createdAt).toLocaleDateString() : '—'}`}
         </div>
       </div>
 
       <Link 
         to={`/performance/form/${form.id}`} 
+        className={isAction ? "btn btn-primary" : "btn btn-secondary"}
         style={{ 
-          marginTop: 8, padding: "10px", borderRadius: 10, textDecoration: "none",
-          background: isAction ? COLORS.accent : COLORS.bg,
-          color: isAction ? "#fff" : COLORS.text,
-          fontSize: 13, fontWeight: 700, textAlign: "center",
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-          transition: "background 0.2s",
+          marginTop: '8px', 
+          width: '100%',
+          display: "flex", alignItems: "center", justifyContent: "center", gap: '8px',
+          textDecoration: "none"
         }}
-        onMouseEnter={e => e.currentTarget.style.background = isAction ? COLORS.accentDim : COLORS.border}
-        onMouseLeave={e => e.currentTarget.style.background = isAction ? COLORS.accent : COLORS.bg}
       >
         {form.status === 'pending' ? (
           <>Action Form <Zap size={14} /></>

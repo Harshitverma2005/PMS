@@ -19,4 +19,23 @@ export const exportReview = async (formId) => {
   }
 };
 
-export default { exportReview };
+// Admin-only: download all upward feedback about a manager for a cycle as one HTML file.
+export const exportUpwardReport = async (cycleId, managerId) => {
+  try {
+    const response = await apiClient.get(`/reviews/cycles/${cycleId}/managers/${managerId}/upward-export`, {
+      responseType: 'blob',
+    });
+    const url = URL.createObjectURL(new Blob([response.data], { type: 'text/html' }));
+    const a = document.createElement('a');
+    a.href = url;
+    const disposition = response.headers['content-disposition'] || '';
+    const match = disposition.match(/filename="([^"]+)"/);
+    a.download = match ? match[1] : 'upward_feedback.html';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    throw new Error('Export failed — please try again');
+  }
+};
+
+export default { exportReview, exportUpwardReport };

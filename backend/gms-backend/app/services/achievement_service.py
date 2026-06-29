@@ -79,8 +79,8 @@ def list_achievements(
     if role in ["member", "employee"] or employee_id is None:
         target_id = requesting_user.id
     else:
-        # Manager requesting someone else's achievements
-        if not is_direct_manager(db, requesting_user.id, employee_id):
+        # Admin can view anyone; a manager only their direct reports.
+        if role.lower() != "admin" and not is_direct_manager(db, requesting_user.id, employee_id):
             raise PermissionError("You can only view achievements of your direct reports")
         target_id = employee_id
 

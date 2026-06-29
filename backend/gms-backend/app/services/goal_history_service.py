@@ -67,9 +67,7 @@ def get_history(db: Session, goal_id: int) -> List[GoalStatusHistoryResponse]:
     )
     result = []
     for row in rows:
-        actor_name = row.actor.full_name if row.actor and hasattr(row.actor, 'full_name') else (
-            f"{row.actor.first_name} {row.actor.last_name}".strip() if row.actor else "Unknown"
-        )
+        actor_name = row.actor.name if row.actor else "Unknown"
         result.append(GoalStatusHistoryResponse(
             from_status=row.from_status,
             to_status=row.to_status,

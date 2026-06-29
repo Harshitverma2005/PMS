@@ -30,6 +30,8 @@ export const API_ENDPOINTS = {
     TRIGGER: id => `/review-cycles/${id}/trigger`,
     CLOSE: id => `/review-cycles/${id}/close`,
     COMPLIANCE: id => `/review-cycles/${id}/compliance`,
+    UPWARD_FEEDBACK: id => `/review-cycles/${id}/upward-feedback`,
+    RESULTS: id => `/review-cycles/${id}/results`,
   },
   FEEDBACK: {
     BASE: '/review-forms/',
