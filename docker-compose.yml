@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: gms_pass
       POSTGRES_DB: gms_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -21,6 +21,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "0.0.0.0:8003:8000"
+    env_file:
+      - ./backend/gms-backend/.env
     environment:
       - DATABASE_URL=postgresql+psycopg://gms_user:gms_pass@postgres:5432/gms_db
       - SECRET_KEY=gms-secret-key-change-in-production-min-32-characters-long
@@ -35,6 +37,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "0.0.0.0:3001:3001"
+    environment:
+      - API_TARGET=http://gms-backend:8000
     depends_on:
       - gms-backend
     restart: unless-stopped

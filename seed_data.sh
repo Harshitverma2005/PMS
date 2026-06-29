@@ -3,7 +3,7 @@ BASE="http://localhost:8003/api/v1"
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 ADMIN_TOKEN=$(curl -s -X POST "$BASE/auth/login" -H "Content-Type: application/json" \
-  -d '{"email":"vermajiharshi1@gmail.com","password":"test"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+  -d '{"email":"sandeep@opstree.com","password":"test"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
 echo "✅ Admin logged in"
 

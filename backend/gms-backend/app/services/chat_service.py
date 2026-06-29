@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from openai import OpenAI
 from app.models.user import User
 from app.models.goal import Goal
-from app.models.feedback import FeedbackForm
+from app.models.feedback import Feedback
 
 def get_groq_client():
     api_key = os.environ.get("GROQ_API_KEY")
@@ -17,7 +17,7 @@ def get_groq_client():
 
 def fetch_employee_context(db: Session, user: User):
     goals = db.query(Goal).filter(Goal.owner_id == user.id).all()
-    feedback = db.query(FeedbackForm).filter(FeedbackForm.employee_id == user.id).all()
+    feedback = db.query(Feedback).filter(Feedback.user_id == user.id).all()
     return {
         "role": "employee",
         "name": user.name,
@@ -72,7 +72,7 @@ def chat_with_llm(context: dict, message: str) -> str:
     
     try:
         response = client.chat.completions.create(
-            model="llama3-8b-8192", 
+            model="llama-3.1-8b-instant", 
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message}
