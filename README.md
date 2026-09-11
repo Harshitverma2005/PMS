@@ -1,247 +1,260 @@
-# MarathonNexus
+# PMS
 
-> The operations cockpit for race day.
-MarathonNexus is a full-stack marathon operations platform that connects runners, organizers, and volunteers in one live workflow. It takes an event from registration to approval, bib collection, finish timing, certification, and communication without forcing the team to stitch together spreadsheets, chat threads, and separate check-in tools.
+## Performance, goals, and growth in one place
 
-## Why it exists
-Race day is a coordination problem disguised as a sporting event. MarathonNexus gives every role a focused workspace:
+PMS is a modern performance management platform for teams that want more than a once-a-year review. It connects goals, progress, feedback, reviews, recognition, readiness, and the context behind every decision in one focused workspace.
 
-| Role | What they can do |
-| **Runners** | Register for an event, confirm participation, follow status changes, view their race progress, and download certificates. |
-| **Organizers** | Monitor the event dashboard, approve registrations, assign bibs, manage volunteers and tasks, start/reset the event, broadcast updates, and export results. |
-| **Volunteers** | Scan runner QR codes, complete operational tasks, record finish times, and follow their assigned work. |
-The result is a shared operational timeline rather than three disconnected portals.
+The platform is built around a simple idea:
 
-## Product highlights
-- **Registration lifecycle**: registration, approval, confirmation, bib collection, finish, and certification.
-- **Live operations**: WebSocket-powered dashboard and runner-status updates backed by Redis pub/sub.
-- **QR check-in**: browser-based volunteer scanning for fast bib collection and finish-bib workflows.
-- **Race control**: organizer controls for event start, reset, live status, and operational broadcasts.
-- **Volunteer coordination**: task creation, assignment, progress updates, approval, and certification.
-- **Results and records**: participant history, leaderboard views, CSV import/export, and downloadable certificates.
-- **Transactional communication**: Celery workers handle email and other work that should not block an API request.
-- **Local-first development**: one Docker Compose stack includes the app, database, broker, worker, reverse proxy, and MailHog.
+> Great performance conversations are continuous, evidence-based, and human.
+
+PMS gives members a clear view of what matters, gives managers the signals they need to coach well, and gives organizations a reliable record of how work evolves over time.
+
+## What it does
+
+### Goals that move forward
+
+- Create and manage goals with priority, weightage, tags, dates, and progress.
+- Use a guided workflow from draft to approval, active tracking, completion, feedback, and scoring.
+- Break goals into subtasks and calculate progress from completed work.
+- Detect at-risk goals when elapsed time and completion diverge.
+- Preserve status transitions in goal history.
+
+### Reviews with context
+
+- Collect member self-feedback and evaluator feedback.
+- Score performance across structured rating categories.
+- Build review drafts with optional AI assistance.
+- Export review information for reporting and follow-up.
+- Surface feedback flags for administrator attention.
+
+### A richer view of contribution
+
+- Personal and team dashboards with performance signals.
+- Timeline and work-trail views for a durable record of activity.
+- Achievements and kudos for recognizing meaningful contributions.
+- Readiness views for development and progression conversations.
+- Probation tracking and review milestones.
+- Notifications and scheduled reminders.
+- Workload intelligence and organization-level administration.
+
+## Product flow
+
+```text
+Set goals -> Approve -> Track progress -> Complete
+	 |                                      |
+	 +-> Timeline and history               +-> Feedback -> Score -> Review
+																  |
+											 Recognition, readiness, and growth signals
+```
 
 ## Architecture
+
 ```text
-                           +------------------+
-                           |   React + Vite   |
-                           |  runner / ops UI |
-                           +--------+---------+
-                                    |
-               Nginx :8080
-                  |
-          +-------------------+-------------------+
-      |                                       |
-   FastAPI :8000                         WebSocket routes
-      |                                       |
-   PostgreSQL 15 <------ SQLAlchemy       Redis 7
-      |                                       |
-      +--------------------+------------------+
-                 |
-              Celery worker
-                 |
-                               MailHog / SMTP
+								 +-----------------------+
+								 | React + Vite frontend |
+								 | localhost:3001        |
+								 +-----------+-----------+
+												 |
+											 /api proxy
+												 |
+								 +-----------v-----------+
+								 | FastAPI backend       |
+								 | localhost:8000        |
+								 +-----------+-----------+
+												 |
+								 +-----------v-----------+
+								 | PostgreSQL / SQLite   |
+								 +-----------------------+
 ```
 
-### Stack
-- **Frontend**: React 19, Vite, React Router, Zustand, TanStack Query/Table, Tailwind CSS, Framer Motion, Lucide, `html5-qrcode`
-- **Backend**: Python, FastAPI, SQLAlchemy 2, Pydantic, Uvicorn
-- **Persistence**: PostgreSQL 15 with Alembic migrations
-- **Async work and realtime**: Celery and Redis
-- **Documents and messaging**: Jinja templates, WeasyPrint, ReportLab, QRCode, MailHog
-- **Edge**: Nginx reverse proxy
-## Run it locally
+### Technology
 
-### Prerequisites
-- Docker Engine
-- Docker Compose v2 (`docker compose`)
-- Ports `8080`, `5432`, `5173`, `8025`, and `1025` available
-### 1. Start the stack
-
-From the directory containing `docker-compose.yml`:
-```bash
-docker compose up --build -d
-```
-This starts PostgreSQL, Redis, MailHog, the FastAPI backend, the Celery worker, the Vite frontend, and Nginx.
-
-### 2. Prepare the database
-Apply the checked-in Alembic migrations:
-
-```bash
-docker compose exec backend alembic upgrade head
-```
-Load a ready-to-explore event with sample runners, volunteers, tasks, and registrations:
-
-```bash
-docker compose exec -e PYTHONPATH=/app backend python seed.py
-```
-### 3. Open the experience
-
-| Surface | URL |
-| Application | [http://localhost:8080](http://localhost:8080) |
-| Swagger UI | [http://localhost:8080/api/v1/docs](http://localhost:8080/api/v1/docs) |
-| OpenAPI document | [http://localhost:8080/openapi.json](http://localhost:8080/openapi.json) |
-| API health | [http://localhost:8080/health](http://localhost:8080/health) |
-| MailHog inbox | [http://localhost:8025](http://localhost:8025) |
-
-## Demo accounts
-These accounts are created by the seed scripts and are intended for local development only.
-
-| Role | Email | Password |
-| Organizer | `admin@marathon.local` | `admin123` |
-| Runner | `runner@marathon.local` | `runner123` |
-| Volunteer | `volunteer@marathon.local` | `volunteer123` |
-| Additional volunteers | `vol4@marathon.local` through `vol13@marathon.local` | `volunteer123` |
+| Layer | Tools |
+| --- | --- |
+| Frontend | React 18, Vite, React Router, Zustand, Tailwind CSS, Lucide React |
+| API | FastAPI, Uvicorn, Pydantic |
+| Persistence | SQLAlchemy, PostgreSQL, SQLite for lightweight local runs |
+| Security | JWT authentication, role-based access control, hierarchy-aware authorization |
+| Operations | Docker Compose, APScheduler, OpenAPI documentation |
+| Integrations | SMTP email, Resend, optional OpenAI-compatible AI provider |
 
 ## Repository map
+
 ```text
-backend/
-   app/
-   main.py                    FastAPI application and router registration
-   models.py                  SQLAlchemy domain models
-   modules/
-   auth/                    Registration, login, and current-user identity
-   events/                  Event data and event endpoints
-   registrations/           Runner registration and confirmation
-   organizer/               Race control, approvals, tasks, volunteers, results
-   volunteers/              QR scanning and volunteer task actions
-   certificates/            Runner and volunteer certificate downloads
-     notifications/           Background notification tasks
-     websockets/              Realtime dashboard and status channels
-  alembic/                     Database migration history
-   templates/                   Certificate and email templates
-   tests/                       Backend tests
-frontend/
-   src/
-      pages/                     Runner, organizer, and volunteer experiences
-      api.js                     API client
-   store.js                   Client state
-   App.jsx                    Routes and application shell
-docker-compose.yml             Local orchestration for the complete stack
-nginx/nginx.conf               Frontend, API, WebSocket, and health routing
-
+PMS/
+├── backend/
+│   └── gms-backend/
+│       ├── app/
+│       │   ├── routers/       # HTTP API boundaries
+│       │   ├── services/      # Business rules and orchestration
+│       │   ├── repositories/  # Data access
+│       │   ├── models/        # SQLAlchemy entities
+│       │   ├── schemas/       # Request and response contracts
+│       │   └── main.py        # FastAPI application and route registration
+│       └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── pages/             # Product screens
+│   │   ├── components/        # Shared UI and layout
+│   │   ├── api/               # API clients
+│   │   └── store/              # Client state
+│   └── package.json
+├── docker-compose.yml
+└── README.md
 ```
-## Development workflow
 
-The Compose setup mounts the source tree into the development containers:
+## Run locally
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+ and npm
+- PostgreSQL 14+ for a durable local database, or SQLite for a quick start
+
+### 1. Start the API
 
 ```bash
-# Follow all services
-docker compose logs -f
+cd backend/gms-backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-# Follow only the API or worker
-docker compose logs -f backend
-docker compose logs -f celery_worker
+# SQLite is the quickest local option.
+export DATABASE_URL="sqlite:///./pms.db"
+export SECRET_KEY="replace-this-with-a-long-random-secret"
 
-# Restart after an environment or watcher change
-docker compose restart frontend backend celery_worker
-# Stop containers while keeping the PostgreSQL volume
-docker compose down
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
-Frontend changes use Vite HMR. Backend changes are picked up by Uvicorn's reload mode. When filesystem events are unreliable in Docker or WSL, restart the affected service.
 
-### Frontend checks
+The API is available at:
+
+- Application: http://localhost:8000
+- Health check: http://localhost:8000/health
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+### 2. Start the frontend
+
+In a second terminal:
+
 ```bash
 cd frontend
 npm install
-npm run lint
-npm run build
+npm run dev
 ```
-### Backend checks
+
+Open http://localhost:3001. The Vite proxy forwards `/api` requests to `http://127.0.0.1:8000` by default. To point the frontend at another API:
 
 ```bash
-docker compose exec backend pytest
+API_TARGET=http://localhost:8000 npm run dev
 ```
-## Configuration and security
 
-Compose supplies development defaults for the database, Redis, JWT, organizer account, and application URL. Override them with a root `.env` file when needed, for example:
+### 3. Start the complete Docker stack
+
+```bash
+docker compose up --build
+```
+
+The Compose stack includes PostgreSQL, the API, and the frontend. Its default host ports are:
+
+- Frontend: http://localhost:3001
+- API: http://localhost:8003
+- PostgreSQL: `localhost:5435`
+
+Stop the stack with:
+
+```bash
+docker compose down
+```
+
+## Configuration
+
+Create `backend/gms-backend/.env` locally and keep it out of version control. At minimum:
 
 ```dotenv
-POSTGRES_USER=marathon_user
-POSTGRES_PASSWORD=change-me
-POSTGRES_DB=marathon
-JWT_SECRET=use-a-long-random-secret
-APP_BASE_URL=http://localhost:8080
+DATABASE_URL=sqlite:///./pms.db
+SECRET_KEY=use-a-long-random-value
+
+EMAIL_ENABLED=false
+EMAIL_BACKEND=smtp
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-address@example.com
+SMTP_PASSWORD=your-app-password
+SMTP_USE_TLS=true
+MAIL_FROM=PMS Platform <your-address@example.com>
+
+AI_PROVIDER_URL=https://api.openai.com/v1/chat/completions
+AI_API_KEY=
+GROQ_API_KEY=
 ```
-Before any shared or production deployment:
 
-- replace every development password and secret;
-- configure SMTP through environment variables or a secret manager;
-- restrict CORS from the current development wildcard;
-- use a managed Redis/PostgreSQL setup with backups and access controls;
-- serve the application over HTTPS and configure trusted proxy headers;
-- review the sample credentials and remove seed data.
-
-Do not commit real credentials to the repository. MailHog is the intended local email sink; inspect messages at `http://localhost:8025` instead of sending test mail through a personal SMTP account.
+Email and AI integrations are optional. Use provider-specific app passwords or API keys, never a personal account password. Any credentials that have been pasted into a committed, shared, or exposed `.env` file should be revoked and replaced immediately.
 
 ## API surface
-The API is mounted under `/api/v1` and documented interactively in Swagger UI. The major route groups are:
 
-- `/auth`: registration, login, and current-user identity
-- `/events`: event details
-- `/registrations`: runner registration and confirmation
-- `/organizer`: approvals, bibs, finish times, tasks, volunteers, broadcasts, and leaderboard exports
-- `/volunteers`: QR scanning and task actions
-- `/certificates`: runner and volunteer certificate downloads
-- `/ws`: live dashboard and registration-status WebSocket channels
+The backend exposes versioned endpoints under `/api/v1`, including:
 
-## License and status
+- `/auth` - authentication and tokens
+- `/users` and `/teams` - people, roles, and team structure
+- `/goals` - goals, progress, approvals, and history
+- `/dashboard` - summary metrics and dashboards
+- `/reviews` - feedback, scoring, AI drafts, and exports
+- `/probation` - probation workflows
+- `/notifications` - user notifications
+- `/timeline` - work history and activity trails
+- `/achievements` and `/kudos` - recognition
+- `/readiness` - development and progression signals
+- `/admin` - administration and feedback flags
 
-MarathonNexus is an active project for marathon operations and event-management workflows. Add a project license before distributing or deploying it outside the intended team.
-# Marathon Management Platform
+The OpenAPI schema is generated automatically by FastAPI and is available at `/docs` when the backend is running.
 
-This is a comprehensive, full-stack application built for organizing marathons, managing volunteers, registering participants, and generating real-time bibs/certificates.
+## Roles and authorization
 
-## Tech Stack
-- **Frontend**: React (Vite) + TailwindCSS
-- **Backend**: Python FastAPI
-- **Database**: PostgreSQL
-- **Message Broker & Cache**: Redis
-- **Background Tasks**: Celery
-- **Proxy/Gateway**: Nginx
+PMS supports role-aware workflows for administrators, managers, and members. Access is also shaped by organizational hierarchy: users can access their own information, managers can access appropriate reports, and cross-organization data is restricted by the API authorization layer.
 
-## Prerequisites
-- **Docker** and **Docker Compose** installed on your system.
+## Development checks
 
-## Setup & Running Locally
+Frontend production build:
 
-1. **Clone the repository** (if you haven't already).
-2. **Start the containers**:
-   Run the following command in the root directory where the `docker-compose.yml` file is located:
-   ```bash
-   docker-compose up --build -d
-   ```
-   This will build the frontend, backend, celery workers, and set up postgres/redis automatically.
+```bash
+cd frontend
+npm run build
+```
 
-3. **Apply Database Migrations (Optional)**:
-   Alembic is set up for database migrations. If this is your first time running, or if you modified models, apply migrations:
-   ```bash
-   docker-compose exec backend alembic upgrade head
-   ```
+Backend smoke check:
 
-4. **Seed the Database with Dummy Data**:
-   To populate the database with dummy events, participants, and volunteers, run the seed script:
-   ```bash
-   docker-compose exec -e PYTHONPATH=/app backend python seed.py
-   ```
-   This script will also create roughly 13 volunteers and assign them random tasks so you can immediately test out the dashboards.
+```bash
+cd backend/gms-backend
+python -m pytest
+```
 
-## Accessing the Platform
+For a fast service check, start the API and request:
 
-The whole stack is reverse-proxied through Nginx on port `8080`.
-- **Frontend App**: `http://localhost:8080/`
-- **Backend API Docs (Swagger UI)**: `http://localhost:8080/api/v1/docs`
+```bash
+curl http://127.0.0.1:8000/health
+```
 
-## Default Credentials
+Expected response:
 
-You can log in to test different roles (as populated by the seed script):
-- **Admin/Organizer**: `admin@marathon.local` / `admin123` 
-- **Participant/Runner**: `runner@marathon.local` / `runner123` (same pass for other sample accounts)
-- **Volunteer**: `volunteer@marathon.local` (or `vol4@marathon.local`, up to 13) / `volunteer123`
+```json
+{"status":"healthy","version":"2.0.0"}
+```
 
-## Development Notes
-- When working on the frontend code inside `frontend/src`, Vite's Hot Module Replacement (HMR) will automatically update the UI.
-- When working on the backend, FastAPI's Uvicorn watcher will auto-reload Python files on change.
-- **Troubleshooting**: If UI changes don't seem to appear on Windows/WSL due to file watching limitations in Docker, you can force a restart: `docker-compose restart frontend`.
+## Security notes
 
+- Never commit `.env` files, database files, JWT secrets, SMTP passwords, or provider API keys.
+- Replace the sample `SECRET_KEY` before any shared or deployed environment.
+- Restrict CORS origins before production deployment.
+- Use PostgreSQL, HTTPS, secret management, and a production-grade email configuration outside local development.
+- Rotate any credential that has been exposed in chat, screenshots, logs, or source control.
+
+## Project status
+
+The main product surfaces are implemented across the frontend and backend, including the core goal lifecycle and the expanded timeline, recognition, readiness, review, notification, and administration features. Test and validation notes are kept in the repository alongside the implementation so the project can be audited and extended without losing context.
+
+## License
+
+No license has been declared yet.
+# PMS
